@@ -4,6 +4,7 @@ from pathlib import Path
 import libcst as cst
 
 from freqtrade.constants import Config
+from libcst import Arg, AssignEqual, SimpleWhitespace
 
 
 class StrategyUpdater:
@@ -58,7 +59,8 @@ class NameUpdater(cst.CSTTransformer):
         return updated_node
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
-        """ Renames functions and updates parameters. """
+        """Renames functions, updates parameters, and modifies return types where needed."""
+
         function_mapping = {
             "populate_buy_trend": "populate_entry_trend",
             "populate_sell_trend": "populate_exit_trend",
@@ -66,41 +68,53 @@ class NameUpdater(cst.CSTTransformer):
             "check_buy_timeout": "check_entry_timeout",
             "check_sell_timeout": "check_exit_timeout",
         }
-        requires_side = original_node.name.value in {"custom_stake_amount", "confirm_trade_entry", "custom_entry_price"}
-
+        requires_side = original_node.name.value in {
+            "custom_stake_amount", "confirm_trade_entry", "custom_entry_price"
+        }
+        requires_after_fill = original_node.name.value == "custom_stoploss"
         param_list = []
         for param in original_node.params.params:
-            new_name = cst.Name("exit_reason") if param.name.value == "sell_reason" else param.name
+            new_name = param.name
             new_annotation = param.annotation
-
+            if param.name.value == "sell_reason":
+                new_name = cst.Name("exit_reason")
             if new_annotation and isinstance(new_annotation.annotation, cst.Subscript):
                 subscript = new_annotation.annotation
-                if isinstance(subscript.value, cst.Name) and subscript.value.value == "Optional":
-                    if isinstance(subscript.slice[0].slice, cst.Index):
-                        inner_type = subscript.slice[0].slice.value
-                        new_annotation = new_annotation.with_changes(
-                            annotation=cst.BinaryOperation(
-                                left=inner_type,
-                                operator=cst.BitOr(),
-                                right=cst.Name("None")
-                            )
-                        )
+                if (
+                        isinstance(subscript.value, cst.Name)
+                        and subscript.value.value == "Optional"
+                        and subscript.slice
+                        and isinstance(subscript.slice[0], cst.SubscriptElement)
+                        and isinstance(subscript.slice[0].slice, cst.Index)
+                ):
+                    inner_type = subscript.slice[0].slice.value
+                    new_annotation = cst.Annotation(
+                        cst.BinaryOperation(left=inner_type, operator=cst.BitOr(), right=cst.Name("None"))
+                    )
 
             param_list.append(param.with_changes(name=new_name, annotation=new_annotation))
-
         if requires_side:
-            side_param = cst.Param(
-                name=cst.Name("side"),
-                annotation=cst.Annotation(cst.Name("str"))
-            )
+            side_param = cst.Param(name=cst.Name("side"), annotation=cst.Annotation(cst.Name("str")))
             if param_list and param_list[-1].name.value == "kwargs":
                 param_list.insert(-1, side_param)
             else:
                 param_list.append(side_param)
-
+        if requires_after_fill:
+            after_fill_param = cst.Param(name=cst.Name("after_fill"), annotation=cst.Annotation(cst.Name("bool")))
+            if param_list and param_list[-1].name.value == "kwargs":
+                param_list.insert(-1, after_fill_param)
+            else:
+                param_list.append(after_fill_param)
+            updated_node = updated_node.with_changes(
+                returns=cst.Annotation(
+                    cst.BinaryOperation(left=cst.Name("float"), operator=cst.BitOr(), right=cst.Name("None"))
+                )
+            )
         new_function_name = function_mapping.get(original_node.name.value, original_node.name.value)
-        return updated_node.with_changes(name=cst.Name(new_function_name),
-                                         params=updated_node.params.with_changes(params=param_list))
+        return updated_node.with_changes(
+            name=cst.Name(new_function_name),
+            params=updated_node.params.with_changes(params=param_list),
+        )
 
     def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
         """ Renames variables and strategy attributes. """
@@ -123,8 +137,11 @@ class NameUpdater(cst.CSTTransformer):
         return updated_node.with_changes(value=name_mapping.get(original_node.value, original_node.value))
 
     def leave_Attribute(self, original_node: cst.Attribute, updated_node: cst.Attribute) -> cst.Attribute:
-        """ Updates trade object attributes. """
-        if original_node.value.value == "trade" and original_node.attr.value == "nr_of_successful_buys":
+        if (
+                isinstance(original_node.value, cst.Name)
+                and original_node.value.value == "trade"
+                and original_node.attr.value == "nr_of_successful_buys"
+        ):
             return updated_node.with_changes(attr=cst.Name("nr_of_successful_entries"))
         return updated_node
 
@@ -197,3 +214,52 @@ class NameUpdater(cst.CSTTransformer):
             else:
                 new_comparisons.append(comp)
         return updated_node.with_changes(comparisons=new_comparisons)
+
+    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.Call:
+        if not (isinstance(original_node.func, cst.Name) and
+                original_node.func.value in {"stoploss_from_open", "stoploss_from_absolute"}):
+            return updated_node
+
+        func_name = original_node.func.value
+        new_args = list(updated_node.args)
+
+        # Always add is_short=trade.is_short if it's missing
+        if not any(
+                isinstance(arg.keyword, cst.Name) and arg.keyword.value == "is_short"
+                for arg in original_node.args
+        ):
+            new_args.append(
+                Arg(
+                    keyword=cst.Name("is_short"),
+                    equal=AssignEqual(
+                        whitespace_before=SimpleWhitespace(""),
+                        whitespace_after=SimpleWhitespace("")
+                    ),
+                    value=cst.Attribute(
+                        value=cst.Name("trade"),
+                        attr=cst.Name("is_short")
+                    ),
+                )
+            )
+
+        # For stoploss_from_absolute, also add leverage=trade.leverage
+        if func_name == "stoploss_from_absolute":
+            if not any(
+                    isinstance(arg.keyword, cst.Name) and arg.keyword.value == "leverage"
+                    for arg in original_node.args
+            ):
+                new_args.append(
+                    Arg(
+                        keyword=cst.Name("leverage"),
+                        equal=AssignEqual(
+                            whitespace_before=SimpleWhitespace(""),
+                            whitespace_after=SimpleWhitespace("")
+                        ),
+                        value=cst.Attribute(
+                            value=cst.Name("trade"),
+                            attr=cst.Name("leverage")
+                        ),
+                    )
+                )
+
+        return updated_node.with_changes(args=new_args)
