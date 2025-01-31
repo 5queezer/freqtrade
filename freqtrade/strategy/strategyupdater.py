@@ -129,10 +129,14 @@ class NameUpdater(cst.CSTTransformer):
                 raw_key = element.key.evaluated_value.strip("\"'")
                 mapped_key = StrategyUpdater.rename_dict.get(raw_key, raw_key)
                 if raw_key != mapped_key:
-                    new_key = element.key.with_changes(value=f"'{mapped_key}'")
+                    new_key = element.key.with_changes(
+                        value=f"{element.key.quote}{mapped_key}{element.key.quote}"
+                    )
             if isinstance(element.value, cst.SimpleString):
                 raw_value = element.value.evaluated_value.strip("\"'")
-                new_value = element.value.with_changes(value=f"'{raw_value}'")
+                new_value = element.value.with_changes(
+                    value=f"{element.value.quote}{raw_value}{element.value.quote}"
+                )
             new_elements.append(element.with_changes(key=new_key, value=new_value))
         return updated_node.with_changes(elements=new_elements)
 
