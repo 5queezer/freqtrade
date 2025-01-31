@@ -105,11 +105,43 @@ class NameUpdater(cst.CSTTransformer):
         return updated_node
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
-        if original_node.name.value in StrategyUpdater.function_mapping:
-            return updated_node.with_changes(
-                name=cst.Name(StrategyUpdater.function_mapping[original_node.name.value])
+        param_list = []
+        requires_side = original_node.name.value in {"custom_stake_amount", "confirm_trade_entry", "custom_entry_price"}
+
+        for param in original_node.params.params:
+            param_name = param.name.value
+            new_annotation = param.annotation
+            new_name = param.name
+
+            if param_name == "sell_reason":
+                new_name = cst.Name("exit_reason")
+
+            if new_annotation and isinstance(new_annotation.annotation, cst.Subscript):
+                subscript = new_annotation.annotation
+                if isinstance(subscript.value, cst.Name) and subscript.value.value == "Optional":
+                    if subscript.slice and isinstance(subscript.slice[0].slice, cst.Index):
+                        inner_type = subscript.slice[0].slice.value
+                        new_annotation = new_annotation.with_changes(
+                            annotation=cst.BinaryOperation(
+                                left=inner_type,
+                                operator=cst.BitOr(),
+                                right=cst.Name("None")
+                            )
+                        )
+
+            param_list.append(param.with_changes(name=new_name, annotation=new_annotation))
+
+        if requires_side:
+            side_param = cst.Param(
+                name=cst.Name("side"),
+                annotation=cst.Annotation(cst.Name("str"))
             )
-        return updated_node
+            if param_list and isinstance(param_list[-1].name, cst.Name) and param_list[-1].name.value == "kwargs":
+                param_list.insert(-1, side_param)
+            else:
+                param_list.append(side_param)
+
+        return updated_node.with_changes(params=updated_node.params.with_changes(params=param_list))
 
     def leave_Attribute(self, original_node: cst.Attribute, updated_node: cst.Attribute) -> cst.Attribute:
         if (
