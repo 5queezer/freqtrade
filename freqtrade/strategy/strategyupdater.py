@@ -63,13 +63,40 @@ class NameUpdater(cst.CSTTransformer):
                 return updated_node.with_changes(value=cst.Integer("3"))
         return updated_node
 
-    def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
-        code_str = updated_node.code
-        if "INTERFACE_VERSION" not in code_str:
-            new_line = cst.SimpleStatementLine(
-                body=[cst.Assign(targets=[cst.AssignTarget(cst.Name("INTERFACE_VERSION"))], value=cst.Integer("3"))]
-            )
-            return updated_node.with_changes(body=[new_line] + list(updated_node.body))
+    def leave_ClassDef(self, original_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
+        if any(
+                isinstance(base.value, cst.Name) and base.value.value == "IStrategy"
+                for base in original_node.bases
+        ):
+            has_interface_version = False
+            statements = list(updated_node.body.body)
+            for stmt in statements:
+                if (
+                        isinstance(stmt, cst.SimpleStatementLine)
+                        and len(stmt.body) == 1
+                        and isinstance(stmt.body[0], cst.Assign)
+                ):
+                    for target in stmt.body[0].targets:
+                        if (
+                                isinstance(target.target, cst.Name)
+                                and target.target.value == "INTERFACE_VERSION"
+                        ):
+                            has_interface_version = True
+                            break
+                if has_interface_version:
+                    break
+
+            if not has_interface_version:
+                new_line = cst.SimpleStatementLine(
+                    body=[cst.Assign(
+                        targets=[cst.AssignTarget(cst.Name("INTERFACE_VERSION"))],
+                        value=cst.Integer("3"))
+                    ]
+                )
+                statements.insert(0, new_line)
+                return updated_node.with_changes(
+                    body=updated_node.body.with_changes(body=tuple(statements))
+                )
         return updated_node
 
     def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
@@ -101,11 +128,12 @@ class NameUpdater(cst.CSTTransformer):
             if isinstance(element.key, cst.SimpleString):
                 raw_key = element.key.evaluated_value.strip("\"'")
                 mapped_key = StrategyUpdater.rename_dict.get(raw_key, raw_key)
-                new_key = cst.SimpleString(f"'{mapped_key}'")
+                if raw_key != mapped_key:
+                    new_key = element.key.with_changes(value=f"'{mapped_key}'")
             if isinstance(element.value, cst.SimpleString):
                 raw_value = element.value.evaluated_value.strip("\"'")
-                new_value = cst.SimpleString(f"'{raw_value}'")
-            new_elements.append(cst.DictElement(key=new_key, value=new_value))
+                new_value = element.value.with_changes(value=f"'{raw_value}'")
+            new_elements.append(element.with_changes(key=new_key, value=new_value))
         return updated_node.with_changes(elements=new_elements)
 
     def leave_Subscript(self, original_node: cst.Subscript, updated_node: cst.Subscript) -> cst.Subscript:
@@ -116,10 +144,11 @@ class NameUpdater(cst.CSTTransformer):
                 if isinstance(index_value, cst.SimpleString):
                     key = index_value.evaluated_value.strip("\"'")
                     if key in StrategyUpdater.name_mapping:
-                        new_sub = slice_elem.with_changes(
-                            slice=cst.Index(value=cst.SimpleString(f"'{StrategyUpdater.name_mapping[key]}'"))
+                        new_slices.append(
+                            slice_elem.with_changes(
+                                slice=cst.Index(value=cst.SimpleString(f"'{StrategyUpdater.name_mapping[key]}'"))
+                            )
                         )
-                        new_slices.append(new_sub)
                     else:
                         new_slices.append(slice_elem)
                 elif isinstance(index_value, cst.List):
@@ -132,8 +161,7 @@ class NameUpdater(cst.CSTTransformer):
                         else:
                             new_elements.append(element)
                     new_list = cst.Index(value=cst.List(new_elements))
-                    new_sub = slice_elem.with_changes(slice=new_list)
-                    new_slices.append(new_sub)
+                    new_slices.append(slice_elem.with_changes(slice=new_list))
                 else:
                     new_slices.append(slice_elem)
             else:
@@ -146,8 +174,11 @@ class NameUpdater(cst.CSTTransformer):
             if isinstance(comp.operator, cst.Equal) and isinstance(comp.comparator, cst.SimpleString):
                 key = comp.comparator.evaluated_value.strip("\"'")
                 if key in StrategyUpdater.name_mapping:
-                    new_comparator = cst.SimpleString(f"'{StrategyUpdater.name_mapping[key]}'")
-                    new_comparisons.append(cst.ComparisonTarget(operator=comp.operator, comparator=new_comparator))
+                    new_comparisons.append(
+                        comp.with_changes(
+                            comparator=cst.SimpleString(f"'{StrategyUpdater.name_mapping[key]}'")
+                        )
+                    )
                 else:
                     new_comparisons.append(comp)
             else:
