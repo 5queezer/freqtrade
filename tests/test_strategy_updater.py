@@ -263,3 +263,48 @@ class someStrategy(IStrategy):
     assert "class someStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code
     # currently still missing:
     # Webhook terminology, Telegram notification settings, Strategy/Config settings
+
+
+def test_strategy_updater_methods(default_conf, caplog) -> None:
+    """
+    Tests:
+    - Function renaming
+    - INTERFACE_VERSION insertion
+    - Adding `side` parameter to specific functions
+    - Updating Optional[X] to X | None
+    """
+    instance_strategy_updater = StrategyUpdater()
+    modified_code1 = instance_strategy_updater.update_code(
+        '''
+class AwesomeStrategy(IStrategy):
+    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
+                            proposed_stake: float, min_stake: Optional[float], max_stake: float,
+                            entry_tag: Optional[str], **kwargs) -> float:
+        return proposed_stake
+
+    def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float,
+                            entry_tag: Optional[str], **kwargs) -> bool:
+        return True
+
+    def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float,
+                           entry_tag: Optional[str], **kwargs) -> float:
+        return current_rate
+'''
+    )
+
+    assert "populate_entry_trend" not in modified_code1  # Ensure function renaming didn't falsely apply
+    assert "INTERFACE_VERSION = 3" in modified_code1
+    assert "class AwesomeStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code1
+
+    assert "min_stake: float | None" in modified_code1
+    assert "entry_tag: str | None" in modified_code1
+    assert "side: str" in modified_code1
+
+    assert "def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float," in modified_code1
+    assert "side: str, **kwargs)" in modified_code1
+
+    assert "def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float," in modified_code1
+    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code1
+
+    assert "def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float," in modified_code1
+    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code1
