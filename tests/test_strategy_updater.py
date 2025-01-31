@@ -308,3 +308,44 @@ class AwesomeStrategy(IStrategy):
 
     assert "def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float," in modified_code1
     assert "entry_tag: str | None, side: str, **kwargs)" in modified_code1
+
+
+def test_strategy_updater_adjust_trade_position(default_conf, caplog) -> None:
+    """
+    Checks that trade.nr_of_successful_buys is updated to trade.nr_of_successful_entries.
+    """
+    instance_strategy_updater = StrategyUpdater()
+    modified_code = instance_strategy_updater.update_code(
+        """
+def adjust_trade_position(trade, current_time: datetime, current_rate: float, 
+                          current_profit: float, **kwargs):
+    nr_orders = trade.nr_of_successful_buys
+    return nr_orders
+        """
+    )
+
+    assert "nr_orders = trade.nr_of_successful_entries" in modified_code
+
+
+def test_strategy_updater_custom_stoploss(default_conf, caplog) -> None:
+    """
+    Checks that stoploss_from_open and stoploss_from_absolute correctly receive is_short.
+    Also verifies that the function signature includes after_fill: bool and returns float | None.
+    """
+    instance_strategy_updater = StrategyUpdater()
+    modified_code = instance_strategy_updater.update_code(
+        """
+def custom_stoploss(pair: str, trade: 'Trade', current_time: datetime,
+                    current_rate: float, current_profit: float, **kwargs) -> float:
+    if current_profit > 0.10:
+        return stoploss_from_open(0.07, current_profit)
+
+    return stoploss_from_absolute(current_rate - (candle['atr'] * 2), current_rate)
+        """
+    )
+
+    assert "def custom_stoploss(pair: str, trade: 'Trade', current_time: datetime," in modified_code
+    assert "current_rate: float, current_profit: float, after_fill: bool," in modified_code
+    assert "stoploss_from_open(0.07, current_profit, is_short=trade.is_short)" in modified_code
+    assert "stoploss_from_absolute(current_rate - (candle['atr'] * 2), current_rate, is_short=trade.is_short, leverage=trade.leverage)" in modified_code
+    assert "-> float | None" in modified_code
