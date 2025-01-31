@@ -50,7 +50,8 @@ class StrategyUpdater:
         with open(source_file, "w") as f:
             f.write(new_code)
 
-    def update_code(self, code: str) -> str:
+    @staticmethod
+    def update_code(code: str) -> str:
         tree = cst.parse_module(code)
         updated_tree = tree.visit(NameUpdater())
         return updated_tree.code
@@ -182,7 +183,8 @@ class NameUpdater(cst.CSTTransformer):
                     if key in StrategyUpdater.name_mapping:
                         new_slices.append(
                             slice_elem.with_changes(
-                                slice=cst.Index(value=cst.SimpleString(f"'{StrategyUpdater.name_mapping[key]}'"))
+                                slice=cst.Index(value=cst.SimpleString(
+                                    f"{index_value.quote}{StrategyUpdater.name_mapping[key]}{index_value.quote}"))
                             )
                         )
                     else:
@@ -212,7 +214,8 @@ class NameUpdater(cst.CSTTransformer):
                 if key in StrategyUpdater.name_mapping:
                     new_comparisons.append(
                         comp.with_changes(
-                            comparator=cst.SimpleString(f"'{StrategyUpdater.name_mapping[key]}'")
+                            comparator=cst.SimpleString(
+                                f"{comp.comparator.quote}{StrategyUpdater.name_mapping[key]}{comp.comparator.quote}")
                         )
                     )
                 else:
