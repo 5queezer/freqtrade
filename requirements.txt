@@ -59,5 +59,5 @@ schedule==1.2.2
 websockets==14.2
 janus==2.0.0
 
-ast-comments==1.2.2
 packaging==24.2
+libcst==1.6.0
