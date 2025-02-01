@@ -302,6 +302,24 @@ class AwesomeStrategy(IStrategy):
     assert "entry_tag: str | None, side: str, **kwargs)" in modified_code
 
 
+def test_side_parameter_not_duplicated(default_conf, caplog) -> None:
+    """
+    Checks that if a function already has a 'side' parameter,
+    the updater does not insert it a second time.
+    """
+    instance_strategy_updater = StrategyUpdater()
+    modified_code = instance_strategy_updater.update_code(
+        '''
+class TestStrategy(IStrategy):
+    def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float,
+                             entry_tag: Optional[str], side: str, **kwargs) -> float:
+        return current_rate
+'''
+    )
+    # Ensure "side: str" appears only once in the function signature.
+    assert modified_code.count("side: str") == 1
+
+
 def test_optional_conversion_param(default_conf, caplog) -> None:
     """
     Checks that function parameters annotated as Optional[X] are converted to X | None.
