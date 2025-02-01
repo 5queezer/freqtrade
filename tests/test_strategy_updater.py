@@ -45,7 +45,7 @@ def test_strategy_updater_params(default_conf, caplog) -> None:
     buy/sell in hyperopt param remain as is if used within IntParameter(space='buy')
     """
     instance_strategy_updater = StrategyUpdater()
-    modified_code2 = instance_strategy_updater.update_code(
+    modified_code = instance_strategy_updater.update_code(
         """
 ticker_interval = '15m'
 buy_some_parameter = IntParameter(space='buy')
@@ -53,10 +53,10 @@ sell_some_parameter = IntParameter(space='sell')
 """
     )
 
-    assert "timeframe" in modified_code2
-    # check for not editing hyperopt spaces
-    assert "space='buy'" in modified_code2
-    assert "space='sell'" in modified_code2
+    assert "timeframe" in modified_code
+    # Check for not editing hyperopt spaces
+    assert "space='buy'" in modified_code
+    assert "space='sell'" in modified_code
 
 
 def test_strategy_updater_constants(default_conf, caplog) -> None:
@@ -69,7 +69,7 @@ def test_strategy_updater_constants(default_conf, caplog) -> None:
     forcebuy_enable -> force_entry_enable
     """
     instance_strategy_updater = StrategyUpdater()
-    modified_code3 = instance_strategy_updater.update_code(
+    modified_code = instance_strategy_updater.update_code(
         """
 use_sell_signal = True
 sell_profit_only = True
@@ -79,11 +79,11 @@ forcebuy_enable = True
 """
     )
 
-    assert "use_exit_signal" in modified_code3
-    assert "exit_profit_only" in modified_code3
-    assert "exit_profit_offset" in modified_code3
-    assert "ignore_roi_if_entry_signal" in modified_code3
-    assert "force_entry_enable" in modified_code3
+    assert "use_exit_signal" in modified_code
+    assert "exit_profit_only" in modified_code
+    assert "exit_profit_offset" in modified_code
+    assert "ignore_roi_if_entry_signal" in modified_code
+    assert "force_entry_enable" in modified_code
 
 
 def test_strategy_updater_df_columns(default_conf, caplog) -> None:
@@ -211,7 +211,7 @@ sell_reason == 'emergency_sell'
 """
     )
 
-    # those tests currently don't work, next in line.
+    # Verify that string literals are updated as expected.
     assert "exit_signal" in modified_code
     assert "exit_reason" in modified_code
     assert "force_exit" in modified_code
@@ -250,20 +250,18 @@ class someStrategy(IStrategy):
     assert "This is the 4th comment" in modified_code
     assert "INTERFACE_VERSION = 3" in modified_code
     assert "class someStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code
-    # currently still missing:
-    # Webhook terminology, Telegram notification settings, Strategy/Config settings
 
 
 def test_strategy_updater_methods(default_conf, caplog) -> None:
     """
     Tests:
-    - Function renaming
+    - Function renaming (only advanced functions should be affected)
     - INTERFACE_VERSION insertion
     - Adding `side` parameter to specific functions
-    - Updating Optional[X] to X | None
+    - Converting Optional[X] annotations to X | None
     """
     instance_strategy_updater = StrategyUpdater()
-    modified_code1 = instance_strategy_updater.update_code(
+    modified_code = instance_strategy_updater.update_code(
         '''
 class AwesomeStrategy(IStrategy):
     def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
@@ -281,22 +279,58 @@ class AwesomeStrategy(IStrategy):
 '''
     )
 
-    assert "populate_entry_trend" not in modified_code1
-    assert "INTERFACE_VERSION = 3" in modified_code1
-    assert "class AwesomeStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code1
+    # Ensure no unintended function renaming.
+    assert "populate_entry_trend" not in modified_code
+    # Check INTERFACE_VERSION is inserted correctly.
+    assert "INTERFACE_VERSION = 3" in modified_code
+    assert "class AwesomeStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code
 
-    assert "min_stake: float | None" in modified_code1
-    assert "entry_tag: str | None" in modified_code1
-    assert "side: str" in modified_code1
+    # Check Optional conversion for parameters.
+    assert "min_stake: float | None" in modified_code
+    assert "entry_tag: str | None" in modified_code
+    # Check additional parameter insertion.
+    assert "side: str" in modified_code
 
-    assert "def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float," in modified_code1
-    assert "side: str, **kwargs)" in modified_code1
+    # Verify function signature adjustments.
+    assert "def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float," in modified_code
+    assert "side: str, **kwargs)" in modified_code
 
-    assert "def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float," in modified_code1
-    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code1
+    assert "def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float," in modified_code
+    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code
 
-    assert "def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float," in modified_code1
-    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code1
+    assert "def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float," in modified_code
+    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code
+
+
+def test_optional_conversion_param(default_conf, caplog) -> None:
+    """
+    Checks that function parameters annotated as Optional[X] are converted to X | None.
+    """
+    instance_strategy_updater = StrategyUpdater()
+    modified_code = instance_strategy_updater.update_code(
+        '''
+from typing import Optional
+def foo(x: Optional[float]) -> int:
+    return 1
+'''
+    )
+    assert "x: float | None" in modified_code
+
+
+def test_optional_conversion_return(default_conf, caplog) -> None:
+    """
+    Checks that for custom_stoploss, the return type Optional[X] is converted to X | None.
+    """
+    instance_strategy_updater = StrategyUpdater()
+    modified_code = instance_strategy_updater.update_code(
+        '''
+from typing import Optional
+def custom_stoploss(pair: str, trade: 'Trade', current_time: datetime,
+                    current_rate: float, current_profit: float, **kwargs) -> Optional[float]:
+    return 0.0
+'''
+    )
+    assert "-> float | None" in modified_code
 
 
 def test_strategy_updater_adjust_trade_position(default_conf, caplog) -> None:
