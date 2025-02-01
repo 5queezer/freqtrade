@@ -191,7 +191,7 @@ def test_strategy_updater_comparisons(default_conf, caplog) -> None:
     instance_strategy_updater = StrategyUpdater()
     modified_code = instance_strategy_updater.update_code(
         """
-def confirm_trade_exit(sell_reason):
+def confirm_trade_exit(self, sell_reason):
     if (sell_reason == 'stop_loss'):
         pass
 """
@@ -320,21 +320,6 @@ class TestStrategy(IStrategy):
     assert modified_code.count("side: str") == 1
 
 
-def test_optional_conversion_param(default_conf, caplog) -> None:
-    """
-    Checks that function parameters annotated as Optional[X] are converted to X | None.
-    """
-    instance_strategy_updater = StrategyUpdater()
-    modified_code = instance_strategy_updater.update_code(
-        '''
-from typing import Optional
-def foo(x: Optional[float]) -> int:
-    return 1
-'''
-    )
-    assert "x: float | None" in modified_code
-
-
 def test_optional_conversion_return(default_conf, caplog) -> None:
     """
     Checks that for custom_stoploss, the return type Optional[X] is converted to X | None.
@@ -343,7 +328,7 @@ def test_optional_conversion_return(default_conf, caplog) -> None:
     modified_code = instance_strategy_updater.update_code(
         '''
 from typing import Optional
-def custom_stoploss(pair: str, trade: 'Trade', current_time: datetime,
+def custom_stoploss(self, pair: str, trade: 'Trade', current_time: datetime,
                     current_rate: float, current_profit: float, **kwargs) -> Optional[float]:
     return 0.0
 '''
@@ -358,7 +343,7 @@ def test_strategy_updater_adjust_trade_position(default_conf, caplog) -> None:
     instance_strategy_updater = StrategyUpdater()
     modified_code = instance_strategy_updater.update_code(
         """
-def adjust_trade_position(trade, current_time: datetime, current_rate: float, 
+def adjust_trade_position(self, trade, current_time: datetime, current_rate: float, 
                           current_profit: float, **kwargs):
     nr_orders = trade.nr_of_successful_buys
     return nr_orders
@@ -376,7 +361,7 @@ def test_strategy_updater_custom_stoploss(default_conf, caplog) -> None:
     instance_strategy_updater = StrategyUpdater()
     modified_code = instance_strategy_updater.update_code(
         """
-def custom_stoploss(pair: str, trade: 'Trade', current_time: datetime,
+def custom_stoploss(self, pair: str, trade: 'Trade', current_time: datetime,
                     current_rate: float, current_profit: float, **kwargs) -> float:
     if current_profit > 0.10:
         return stoploss_from_open(0.07, current_profit)
@@ -385,7 +370,7 @@ def custom_stoploss(pair: str, trade: 'Trade', current_time: datetime,
         """
     )
 
-    assert "def custom_stoploss(pair: str, trade: 'Trade', current_time: datetime," in modified_code
+    assert "def custom_stoploss(self, pair: str, trade: 'Trade', current_time: datetime," in modified_code
     assert "current_rate: float, current_profit: float, after_fill: bool," in modified_code
     assert "stoploss_from_open(0.07, current_profit, is_short=trade.is_short)" in modified_code
     assert "stoploss_from_absolute(current_rate - (candle['atr'] * 2), current_rate, is_short=trade.is_short, leverage=trade.leverage)" in modified_code

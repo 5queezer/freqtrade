@@ -2,7 +2,6 @@ import shutil
 from pathlib import Path
 
 import libcst as cst
-from libcst import Arg, AssignEqual, SimpleWhitespace
 
 from freqtrade.constants import Config
 
@@ -31,7 +30,7 @@ class StrategyUpdater:
 class NameUpdater(cst.CSTTransformer):
     """ Applies necessary updates to strategy code while preserving formatting and comments. """
 
-    ORDER_DICT_MAPPINGS = {
+    ORDER_DICT_MAPPING = {
         "order_time_in_force": {
             "key_mapping": {"buy": "entry", "sell": "exit"},
             "value_transform": str.upper,
@@ -113,8 +112,8 @@ class NameUpdater(cst.CSTTransformer):
         for target in original_node.targets:
             if isinstance(target.target, cst.Name):
                 var_name = target.target.value
-                if var_name in self.ORDER_DICT_MAPPINGS and isinstance(updated_node.value, cst.Dict):
-                    mapping = self.ORDER_DICT_MAPPINGS[var_name]
+                if var_name in self.ORDER_DICT_MAPPING and isinstance(updated_node.value, cst.Dict):
+                    mapping = self.ORDER_DICT_MAPPING[var_name]
                     new_dict = self._transform_order_dict(
                         updated_node.value,
                         mapping["key_mapping"],
@@ -130,11 +129,11 @@ class NameUpdater(cst.CSTTransformer):
         if isinstance(updated_node.target, cst.Name):
             var_name = updated_node.target.value
             if (
-                    var_name in self.ORDER_DICT_MAPPINGS
+                    var_name in self.ORDER_DICT_MAPPING
                     and updated_node.value is not None
                     and isinstance(updated_node.value, cst.Dict)
             ):
-                mapping = self.ORDER_DICT_MAPPINGS[var_name]
+                mapping = self.ORDER_DICT_MAPPING[var_name]
                 new_dict = self._transform_order_dict(
                     updated_node.value,
                     mapping["key_mapping"],
@@ -298,11 +297,11 @@ class NameUpdater(cst.CSTTransformer):
                 for arg in original_node.args
         ):
             new_args.append(
-                Arg(
+                cst.Arg(
                     keyword=cst.Name("is_short"),
-                    equal=AssignEqual(
-                        whitespace_before=SimpleWhitespace(""),
-                        whitespace_after=SimpleWhitespace("")
+                    equal=cst.AssignEqual(
+                        whitespace_before=cst.SimpleWhitespace(""),
+                        whitespace_after=cst.SimpleWhitespace("")
                     ),
                     value=cst.Attribute(
                         value=cst.Name("trade"),
@@ -317,11 +316,11 @@ class NameUpdater(cst.CSTTransformer):
                     for arg in original_node.args
             ):
                 new_args.append(
-                    Arg(
+                    cst.Arg(
                         keyword=cst.Name("leverage"),
-                        equal=AssignEqual(
-                            whitespace_before=SimpleWhitespace(""),
-                            whitespace_after=SimpleWhitespace("")
+                        equal=cst.AssignEqual(
+                            whitespace_before=cst.SimpleWhitespace(""),
+                            whitespace_after=cst.SimpleWhitespace("")
                         ),
                         value=cst.Attribute(
                             value=cst.Name("trade"),
