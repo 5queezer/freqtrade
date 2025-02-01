@@ -2,9 +2,9 @@ import shutil
 from pathlib import Path
 
 import libcst as cst
+from libcst import Arg, AssignEqual, SimpleWhitespace
 
 from freqtrade.constants import Config
-from libcst import Arg, AssignEqual, SimpleWhitespace
 
 
 class StrategyUpdater:
@@ -52,6 +52,38 @@ class NameUpdater(cst.CSTTransformer):
         },
     }
 
+    NAME_MAPPING = {
+        "ticker_interval": "timeframe",
+        "buy": "enter_long",
+        "sell": "exit_long",
+        "buy_tag": "enter_tag",
+        "sell_reason": "exit_reason",
+        "sell_signal": "exit_signal",
+        "custom_sell": "custom_exit",
+        "force_sell": "force_exit",
+        "emergency_sell": "emergency_exit",
+        "use_sell_signal": "use_exit_signal",
+        "sell_profit_only": "exit_profit_only",
+        "sell_profit_offset": "exit_profit_offset",
+        "ignore_roi_if_buy_signal": "ignore_roi_if_entry_signal",
+        "forcebuy_enable": "force_entry_enable",
+    }
+
+    FUNCTION_MAPPING = {
+        "populate_buy_trend": "populate_entry_trend",
+        "populate_sell_trend": "populate_exit_trend",
+        "custom_sell": "custom_exit",
+        "check_buy_timeout": "check_entry_timeout",
+        "check_sell_timeout": "check_exit_timeout",
+    }
+
+    DICT_KEY_MAPPING = {"buy": "entry", "sell": "exit", "buy_tag": "entry_tag"}
+
+    SUBSCRIPT_NAME_MAPPING = {"buy": "enter_long", "sell": "exit_long", "buy_tag": "enter_tag"}
+
+    COMPARISON_NAME_MAPPING = {"sell_signal": "exit_signal", "force_sell": "force_exit",
+                               "emergency_sell": "emergency_exit"}
+
     @staticmethod
     def _transform_order_dict(dict_node: cst.Dict, key_mapping: dict, value_transform) -> cst.Dict:
         new_elements = []
@@ -61,13 +93,16 @@ class NameUpdater(cst.CSTTransformer):
                 raw_key = element.key.evaluated_value
                 if raw_key in key_mapping:
                     mapped_key = key_mapping[raw_key]
-                    new_key = element.key.with_changes(value=f"{element.key.quote}{mapped_key}{element.key.quote}")
+                    new_key = element.key.with_changes(
+                        value=f"{element.key.quote}{mapped_key}{element.key.quote}"
+                    )
             new_value = element.value
             if value_transform is not None and isinstance(element.value, cst.SimpleString):
                 raw_value = element.value.evaluated_value
                 transformed_value = value_transform(raw_value)
                 new_value = element.value.with_changes(
-                    value=f"{element.value.quote}{transformed_value}{element.value.quote}")
+                    value=f"{element.value.quote}{transformed_value}{element.value.quote}"
+                )
             new_elements.append(element.with_changes(key=new_key, value=new_value))
         return dict_node.with_changes(elements=new_elements)
 
@@ -91,8 +126,11 @@ class NameUpdater(cst.CSTTransformer):
     def leave_AnnAssign(self, original_node: cst.AnnAssign, updated_node: cst.AnnAssign) -> cst.AnnAssign:
         if isinstance(updated_node.target, cst.Name):
             var_name = updated_node.target.value
-            if var_name in self.ORDER_DICT_MAPPINGS and updated_node.value is not None and isinstance(
-                    updated_node.value, cst.Dict):
+            if (
+                    var_name in self.ORDER_DICT_MAPPINGS
+                    and updated_node.value is not None
+                    and isinstance(updated_node.value, cst.Dict)
+            ):
                 mapping = self.ORDER_DICT_MAPPINGS[var_name]
                 new_dict = self._transform_order_dict(
                     updated_node.value,
@@ -125,13 +163,6 @@ class NameUpdater(cst.CSTTransformer):
         return updated_node
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
-        function_mapping = {
-            "populate_buy_trend": "populate_entry_trend",
-            "populate_sell_trend": "populate_exit_trend",
-            "custom_sell": "custom_exit",
-            "check_buy_timeout": "check_entry_timeout",
-            "check_sell_timeout": "check_exit_timeout",
-        }
         requires_side = original_node.name.value in {
             "custom_stake_amount", "confirm_trade_entry", "custom_entry_price"
         }
@@ -173,30 +204,14 @@ class NameUpdater(cst.CSTTransformer):
                     cst.BinaryOperation(left=cst.Name("float"), operator=cst.BitOr(), right=cst.Name("None"))
                 )
             )
-        new_function_name = function_mapping.get(original_node.name.value, original_node.name.value)
+        new_function_name = self.FUNCTION_MAPPING.get(original_node.name.value, original_node.name.value)
         return updated_node.with_changes(
             name=cst.Name(new_function_name),
             params=updated_node.params.with_changes(params=param_list),
         )
 
     def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
-        name_mapping = {
-            "ticker_interval": "timeframe",
-            "buy": "enter_long",
-            "sell": "exit_long",
-            "buy_tag": "enter_tag",
-            "sell_reason": "exit_reason",
-            "sell_signal": "exit_signal",
-            "custom_sell": "custom_exit",
-            "force_sell": "force_exit",
-            "emergency_sell": "emergency_exit",
-            "use_sell_signal": "use_exit_signal",
-            "sell_profit_only": "exit_profit_only",
-            "sell_profit_offset": "exit_profit_offset",
-            "ignore_roi_if_buy_signal": "ignore_roi_if_entry_signal",
-            "forcebuy_enable": "force_entry_enable",
-        }
-        return updated_node.with_changes(value=name_mapping.get(original_node.value, original_node.value))
+        return updated_node.with_changes(value=self.NAME_MAPPING.get(original_node.value, original_node.value))
 
     def leave_Attribute(self, original_node: cst.Attribute, updated_node: cst.Attribute) -> cst.Attribute:
         if (
@@ -208,24 +223,18 @@ class NameUpdater(cst.CSTTransformer):
         return updated_node
 
     def leave_Dict(self, original_node: cst.Dict, updated_node: cst.Dict) -> cst.Dict:
-        rename_dict = {"buy": "entry", "sell": "exit", "buy_tag": "entry_tag"}
         new_elements = []
         for element in original_node.elements:
             new_key = element.key
             if isinstance(element.key, cst.SimpleString):
                 raw_key = element.key.evaluated_value.strip("\"'")
                 new_key = element.key.with_changes(
-                    value=f"{element.key.quote}{rename_dict.get(raw_key, raw_key)}{element.key.quote}"
+                    value=f"{element.key.quote}{self.DICT_KEY_MAPPING.get(raw_key, raw_key)}{element.key.quote}"
                 )
             new_elements.append(element.with_changes(key=new_key))
         return updated_node.with_changes(elements=new_elements)
 
     def leave_Subscript(self, original_node: cst.Subscript, updated_node: cst.Subscript) -> cst.Subscript:
-        name_mapping = {
-            "buy": "enter_long",
-            "sell": "exit_long",
-            "buy_tag": "enter_tag"
-        }
         new_slices = []
         for slice_elem in original_node.slice:
             if isinstance(slice_elem.slice, cst.Index):
@@ -235,7 +244,7 @@ class NameUpdater(cst.CSTTransformer):
                     for element in slice_value.elements:
                         if isinstance(element.value, cst.SimpleString):
                             key = element.value.evaluated_value.strip("\"'")
-                            new_key = name_mapping.get(key, key)
+                            new_key = self.SUBSCRIPT_NAME_MAPPING.get(key, key)
                             new_elements.append(
                                 element.with_changes(value=cst.SimpleString(
                                     f"{element.value.quote}{new_key}{element.value.quote}"
@@ -248,7 +257,7 @@ class NameUpdater(cst.CSTTransformer):
                     ))
                 elif isinstance(slice_value, cst.SimpleString):
                     key = slice_value.evaluated_value.strip("\"'")
-                    new_key = name_mapping.get(key, key)
+                    new_key = self.SUBSCRIPT_NAME_MAPPING.get(key, key)
                     new_slices.append(slice_elem.with_changes(
                         slice=cst.Index(value=cst.SimpleString(
                             f"{slice_value.quote}{new_key}{slice_value.quote}"
@@ -261,13 +270,12 @@ class NameUpdater(cst.CSTTransformer):
         return updated_node.with_changes(slice=tuple(new_slices))
 
     def leave_Comparison(self, original_node: cst.Comparison, updated_node: cst.Comparison) -> cst.Comparison:
-        name_mapping = {"sell_signal": "exit_signal", "force_sell": "force_exit", "emergency_sell": "emergency_exit"}
         new_comparisons = []
         for comp in original_node.comparisons:
             if isinstance(comp.operator, cst.Equal) and isinstance(comp.comparator, cst.SimpleString):
                 key = comp.comparator.evaluated_value.strip("\"'")
                 new_comparisons.append(comp.with_changes(comparator=cst.SimpleString(
-                    f"{comp.comparator.quote}{name_mapping.get(key, key)}{comp.comparator.quote}"
+                    f"{comp.comparator.quote}{self.COMPARISON_NAME_MAPPING.get(key, key)}{comp.comparator.quote}"
                 )))
             else:
                 new_comparisons.append(comp)
