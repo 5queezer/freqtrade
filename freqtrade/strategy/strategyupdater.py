@@ -81,8 +81,11 @@ class NameUpdater(cst.CSTTransformer):
 
     SUBSCRIPT_NAME_MAPPING = {"buy": "enter_long", "sell": "exit_long", "buy_tag": "enter_tag"}
 
-    COMPARISON_NAME_MAPPING = {"sell_signal": "exit_signal", "force_sell": "force_exit",
-                               "emergency_sell": "emergency_exit"}
+    COMPARISON_NAME_MAPPING = {
+        "sell_signal": "exit_signal",
+        "force_sell": "force_exit",
+        "emergency_sell": "emergency_exit",
+    }
 
     @staticmethod
     def _transform_order_dict(dict_node: cst.Dict, key_mapping: dict, value_transform) -> cst.Dict:
@@ -188,11 +191,12 @@ class NameUpdater(cst.CSTTransformer):
                     )
             param_list.append(param.with_changes(name=new_name, annotation=new_annotation))
         if requires_side:
-            side_param = cst.Param(name=cst.Name("side"), annotation=cst.Annotation(cst.Name("str")))
-            if param_list and param_list[-1].name.value == "kwargs":
-                param_list.insert(-1, side_param)
-            else:
-                param_list.append(side_param)
+            if not any(param.name.value == "side" for param in param_list):
+                side_param = cst.Param(name=cst.Name("side"), annotation=cst.Annotation(cst.Name("str")))
+                if param_list and param_list[-1].name.value == "kwargs":
+                    param_list.insert(-1, side_param)
+                else:
+                    param_list.append(side_param)
         if requires_after_fill:
             after_fill_param = cst.Param(name=cst.Name("after_fill"), annotation=cst.Annotation(cst.Name("bool")))
             if param_list and param_list[-1].name.value == "kwargs":
