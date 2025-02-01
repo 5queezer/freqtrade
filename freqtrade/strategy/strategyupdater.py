@@ -31,15 +31,78 @@ class StrategyUpdater:
 class NameUpdater(cst.CSTTransformer):
     """ Applies necessary updates to strategy code while preserving formatting and comments. """
 
+    ORDER_DICT_MAPPINGS = {
+        "order_time_in_force": {
+            "key_mapping": {"buy": "entry", "sell": "exit"},
+            "value_transform": str.upper,
+        },
+        "order_types": {
+            "key_mapping": {
+                "buy": "entry",
+                "sell": "exit",
+                "emergencysell": "emergency_exit",
+                "forcesell": "force_exit",
+                "forcebuy": "force_entry",
+            },
+            "value_transform": None,
+        },
+        "unfilledtimeout": {
+            "key_mapping": {"buy": "entry", "sell": "exit"},
+            "value_transform": None,
+        },
+    }
+
+    @staticmethod
+    def _transform_order_dict(dict_node: cst.Dict, key_mapping: dict, value_transform) -> cst.Dict:
+        new_elements = []
+        for element in dict_node.elements:
+            new_key = element.key
+            if isinstance(element.key, cst.SimpleString):
+                raw_key = element.key.evaluated_value
+                if raw_key in key_mapping:
+                    mapped_key = key_mapping[raw_key]
+                    new_key = element.key.with_changes(value=f"{element.key.quote}{mapped_key}{element.key.quote}")
+            new_value = element.value
+            if value_transform is not None and isinstance(element.value, cst.SimpleString):
+                raw_value = element.value.evaluated_value
+                transformed_value = value_transform(raw_value)
+                new_value = element.value.with_changes(
+                    value=f"{element.value.quote}{transformed_value}{element.value.quote}")
+            new_elements.append(element.with_changes(key=new_key, value=new_value))
+        return dict_node.with_changes(elements=new_elements)
+
     def leave_Assign(self, original_node: cst.Assign, updated_node: cst.Assign) -> cst.Assign:
-        """ Ensures `INTERFACE_VERSION = 3` is set inside strategy classes. """
         for target in original_node.targets:
-            if isinstance(target.target, cst.Name) and target.target.value == "INTERFACE_VERSION":
-                return updated_node.with_changes(value=cst.Integer("3"))
+            if isinstance(target.target, cst.Name):
+                var_name = target.target.value
+                if var_name in self.ORDER_DICT_MAPPINGS and isinstance(updated_node.value, cst.Dict):
+                    mapping = self.ORDER_DICT_MAPPINGS[var_name]
+                    new_dict = self._transform_order_dict(
+                        updated_node.value,
+                        mapping["key_mapping"],
+                        mapping["value_transform"],
+                    )
+                    updated_node = updated_node.with_changes(value=new_dict)
+                    break
+                if var_name == "INTERFACE_VERSION":
+                    return updated_node.with_changes(value=cst.Integer("3"))
+        return updated_node
+
+    def leave_AnnAssign(self, original_node: cst.AnnAssign, updated_node: cst.AnnAssign) -> cst.AnnAssign:
+        if isinstance(updated_node.target, cst.Name):
+            var_name = updated_node.target.value
+            if var_name in self.ORDER_DICT_MAPPINGS and updated_node.value is not None and isinstance(
+                    updated_node.value, cst.Dict):
+                mapping = self.ORDER_DICT_MAPPINGS[var_name]
+                new_dict = self._transform_order_dict(
+                    updated_node.value,
+                    mapping["key_mapping"],
+                    mapping["value_transform"],
+                )
+                updated_node = updated_node.with_changes(value=new_dict)
         return updated_node
 
     def leave_ClassDef(self, original_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
-        """ Inserts `INTERFACE_VERSION = 3` inside strategy classes if missing. """
         if any(isinstance(base.value, cst.Name) and base.value.value == "IStrategy" for base in original_node.bases):
             statements = list(updated_node.body.body)
             if not any(
@@ -49,18 +112,19 @@ class NameUpdater(cst.CSTTransformer):
                             for t in stmt.body[0].targets)
                     for stmt in statements
             ):
-                statements.insert(0, cst.SimpleStatementLine(
-                    body=[cst.Assign(
-                        targets=[cst.AssignTarget(cst.Name("INTERFACE_VERSION"))],
-                        value=cst.Integer("3"))
-                    ]
-                ))
+                statements.insert(
+                    0,
+                    cst.SimpleStatementLine(
+                        body=[cst.Assign(
+                            targets=[cst.AssignTarget(cst.Name("INTERFACE_VERSION"))],
+                            value=cst.Integer("3")
+                        )]
+                    )
+                )
                 return updated_node.with_changes(body=updated_node.body.with_changes(body=tuple(statements)))
         return updated_node
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
-        """Renames functions, updates parameters, and modifies return types where needed."""
-
         function_mapping = {
             "populate_buy_trend": "populate_entry_trend",
             "populate_sell_trend": "populate_exit_trend",
@@ -91,7 +155,6 @@ class NameUpdater(cst.CSTTransformer):
                     new_annotation = cst.Annotation(
                         cst.BinaryOperation(left=inner_type, operator=cst.BitOr(), right=cst.Name("None"))
                     )
-
             param_list.append(param.with_changes(name=new_name, annotation=new_annotation))
         if requires_side:
             side_param = cst.Param(name=cst.Name("side"), annotation=cst.Annotation(cst.Name("str")))
@@ -117,7 +180,6 @@ class NameUpdater(cst.CSTTransformer):
         )
 
     def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
-        """ Renames variables and strategy attributes. """
         name_mapping = {
             "ticker_interval": "timeframe",
             "buy": "enter_long",
@@ -146,7 +208,6 @@ class NameUpdater(cst.CSTTransformer):
         return updated_node
 
     def leave_Dict(self, original_node: cst.Dict, updated_node: cst.Dict) -> cst.Dict:
-        """ Updates dictionary keys while preserving formatting. """
         rename_dict = {"buy": "entry", "sell": "exit", "buy_tag": "entry_tag"}
         new_elements = []
         for element in original_node.elements:
@@ -154,18 +215,17 @@ class NameUpdater(cst.CSTTransformer):
             if isinstance(element.key, cst.SimpleString):
                 raw_key = element.key.evaluated_value.strip("\"'")
                 new_key = element.key.with_changes(
-                    value=f"{element.key.quote}{rename_dict.get(raw_key, raw_key)}{element.key.quote}")
+                    value=f"{element.key.quote}{rename_dict.get(raw_key, raw_key)}{element.key.quote}"
+                )
             new_elements.append(element.with_changes(key=new_key))
         return updated_node.with_changes(elements=new_elements)
 
     def leave_Subscript(self, original_node: cst.Subscript, updated_node: cst.Subscript) -> cst.Subscript:
-        """ Updates DataFrame column names inside `dataframe[...]` subscripts. """
         name_mapping = {
             "buy": "enter_long",
             "sell": "exit_long",
             "buy_tag": "enter_tag"
         }
-
         new_slices = []
         for slice_elem in original_node.slice:
             if isinstance(slice_elem.slice, cst.Index):
@@ -183,7 +243,6 @@ class NameUpdater(cst.CSTTransformer):
                             )
                         else:
                             new_elements.append(element)
-
                     new_slices.append(slice_elem.with_changes(
                         slice=cst.Index(value=cst.List(elements=new_elements))
                     ))
@@ -199,18 +258,17 @@ class NameUpdater(cst.CSTTransformer):
                     new_slices.append(slice_elem)
             else:
                 new_slices.append(slice_elem)
-
         return updated_node.with_changes(slice=tuple(new_slices))
 
     def leave_Comparison(self, original_node: cst.Comparison, updated_node: cst.Comparison) -> cst.Comparison:
-        """ Updates comparison expressions like `sell_reason == "x"` """
         name_mapping = {"sell_signal": "exit_signal", "force_sell": "force_exit", "emergency_sell": "emergency_exit"}
         new_comparisons = []
         for comp in original_node.comparisons:
             if isinstance(comp.operator, cst.Equal) and isinstance(comp.comparator, cst.SimpleString):
                 key = comp.comparator.evaluated_value.strip("\"'")
                 new_comparisons.append(comp.with_changes(comparator=cst.SimpleString(
-                    f"{comp.comparator.quote}{name_mapping.get(key, key)}{comp.comparator.quote}")))
+                    f"{comp.comparator.quote}{name_mapping.get(key, key)}{comp.comparator.quote}"
+                )))
             else:
                 new_comparisons.append(comp)
         return updated_node.with_changes(comparisons=new_comparisons)
@@ -223,7 +281,6 @@ class NameUpdater(cst.CSTTransformer):
         func_name = original_node.func.value
         new_args = list(updated_node.args)
 
-        # Always add is_short=trade.is_short if it's missing
         if not any(
                 isinstance(arg.keyword, cst.Name) and arg.keyword.value == "is_short"
                 for arg in original_node.args
@@ -242,7 +299,6 @@ class NameUpdater(cst.CSTTransformer):
                 )
             )
 
-        # For stoploss_from_absolute, also add leverage=trade.leverage
         if func_name == "stoploss_from_absolute":
             if not any(
                     isinstance(arg.keyword, cst.Name) and arg.keyword.value == "leverage"
