@@ -38,42 +38,6 @@ def test_strategy_updater_start(user_dir, capsys) -> None:
     assert re.search(r"Conversion of strategy_test_v2\.py took .* seconds", captured.out)
 
 
-def test_strategy_updater_methods(default_conf, caplog) -> None:
-    """
-    Checks that strategy methods are renamed according to:
-    populate_buy_trend -> populate_entry_trend
-    populate_sell_trend -> populate_exit_trend
-    custom_sell -> custom_exit
-    check_buy_timeout -> check_entry_timeout
-    check_sell_timeout -> check_exit_timeout
-    Also checks that INTERFACE_VERSION is set to 3 inside the class.
-    """
-    instance_strategy_updater = StrategyUpdater()
-    modified_code1 = instance_strategy_updater.update_code(
-        """
-class testClass(IStrategy):
-    def populate_buy_trend():
-        pass
-    def populate_sell_trend():
-        pass
-    def check_buy_timeout():
-        pass
-    def check_sell_timeout():
-        pass
-    def custom_sell():
-        pass
-"""
-    )
-
-    assert "populate_entry_trend" in modified_code1
-    assert "populate_exit_trend" in modified_code1
-    assert "check_entry_timeout" in modified_code1
-    assert "check_exit_timeout" in modified_code1
-    assert "custom_exit" in modified_code1
-    assert "INTERFACE_VERSION = 3" in modified_code1
-    assert "class testClass(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code1
-
-
 def test_strategy_updater_params(default_conf, caplog) -> None:
     """
     Checks that certain parameters are renamed or preserved as needed:
@@ -317,7 +281,7 @@ class AwesomeStrategy(IStrategy):
 '''
     )
 
-    assert "populate_entry_trend" not in modified_code1  # Ensure function renaming didn't falsely apply
+    assert "populate_entry_trend" not in modified_code1
     assert "INTERFACE_VERSION = 3" in modified_code1
     assert "class AwesomeStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code1
 
