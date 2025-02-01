@@ -178,8 +178,12 @@ order_types = {
     'buy': 'limit',
     'sell': 'market',
     'stoploss': 'market',
-    'stoploss_on_exchange': False
+    'stoploss_on_exchange': False,
+    'emergencysell': 'market',
+    'forcesell': 'market',
+    'forcebuy': 'market'
 }
+
 unfilledtimeout = {
     'buy': 1,
     'sell': 2
@@ -187,18 +191,39 @@ unfilledtimeout = {
 """
     )
 
-    assert "'entry': 'gtc'" in modified_code
-    assert "'exit': 'ioc'" in modified_code
+    # Check order_time_in_force transformation
+    assert "'entry': 'GTC'" in modified_code
+    assert "'exit': 'IOC'" in modified_code
+    # Check order_types transformation
     assert "'entry': 'limit'" in modified_code
     assert "'exit': 'market'" in modified_code
+    assert "'emergency_exit': 'market'" in modified_code
+    assert "'force_exit': 'market'" in modified_code
+    assert "'force_entry': 'market'" in modified_code
+
+    # Check unfilledtimeout
     assert "'entry': 1" in modified_code
     assert "'exit': 2" in modified_code
 
 
+def test_order_constants_assignment(default_conf, caplog) -> None:
+    instance_strategy_updater = StrategyUpdater()
+    modified_code = instance_strategy_updater.update_code(
+        '''
+use_sell_signal = True
+sell_profit_only = True
+sell_profit_offset: 0.01
+ignore_roi_if_buy_signal = False
+'''
+    )
+    # Check variable renaming for config booleans
+    assert "use_exit_signal = True" in modified_code
+    assert "exit_profit_only = True" in modified_code
+    assert "exit_profit_offset: 0.01" in modified_code
+    assert "ignore_roi_if_entry_signal = False" in modified_code
+
+
 def test_strategy_updater_comparisons(default_conf, caplog) -> None:
-    """
-    Checks comparisons like sell_reason -> exit_reason, 'stop_loss' remains 'stop_loss' if not in mapping.
-    """
     instance_strategy_updater = StrategyUpdater()
     modified_code = instance_strategy_updater.update_code(
         """
