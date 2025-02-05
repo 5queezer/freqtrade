@@ -38,6 +38,56 @@ def test_strategy_updater_start(user_dir, capsys) -> None:
     assert re.search(r"Conversion of strategy_test_v2\.py took .* seconds", captured.out)
 
 
+def test_strategy_updater_methods(default_conf, caplog) -> None:
+    """
+    Tests:
+    - Function renaming (only advanced functions should be affected)
+    - INTERFACE_VERSION insertion
+    - Adding `side` parameter to specific functions
+    - Converting Optional[X] annotations to X | None
+    """
+    instance_strategy_updater = StrategyUpdater()
+    modified_code = instance_strategy_updater.update_code(
+        '''
+class AwesomeStrategy(IStrategy):
+    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
+                            proposed_stake: float, min_stake: Optional[float], max_stake: float,
+                            entry_tag: Optional[str], **kwargs) -> float:
+        return proposed_stake
+
+    def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float,
+                            entry_tag: Optional[str], **kwargs) -> bool:
+        return True
+
+    def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float,
+                           entry_tag: Optional[str], **kwargs) -> float:
+        return current_rate
+'''
+    )
+
+    # Ensure no unintended function renaming.
+    assert "populate_entry_trend" not in modified_code
+    # Check INTERFACE_VERSION is inserted correctly.
+    assert "INTERFACE_VERSION = 3" in modified_code
+    assert "class AwesomeStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code
+
+    # Check Optional conversion for parameters.
+    assert "min_stake: float | None" in modified_code
+    assert "entry_tag: str | None" in modified_code
+    # Check additional parameter insertion.
+    assert "side: str" in modified_code
+
+    # Verify function signature adjustments.
+    assert "def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float," in modified_code
+    assert "side: str, **kwargs)" in modified_code
+
+    assert "def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float," in modified_code
+    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code
+
+    assert "def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float," in modified_code
+    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code
+
+
 def test_strategy_updater_params(default_conf, caplog) -> None:
     """
     Checks that certain parameters are renamed or preserved as needed:
@@ -211,7 +261,7 @@ sell_reason == 'emergency_sell'
 """
     )
 
-    # Verify that string literals are updated as expected.
+    # those tests currently don't work, next in line.
     assert "exit_signal" in modified_code
     assert "exit_reason" in modified_code
     assert "force_exit" in modified_code
@@ -250,56 +300,6 @@ class someStrategy(IStrategy):
     assert "This is the 4th comment" in modified_code
     assert "INTERFACE_VERSION = 3" in modified_code
     assert "class someStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code
-
-
-def test_strategy_updater_methods(default_conf, caplog) -> None:
-    """
-    Tests:
-    - Function renaming (only advanced functions should be affected)
-    - INTERFACE_VERSION insertion
-    - Adding `side` parameter to specific functions
-    - Converting Optional[X] annotations to X | None
-    """
-    instance_strategy_updater = StrategyUpdater()
-    modified_code = instance_strategy_updater.update_code(
-        '''
-class AwesomeStrategy(IStrategy):
-    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
-                            proposed_stake: float, min_stake: Optional[float], max_stake: float,
-                            entry_tag: Optional[str], **kwargs) -> float:
-        return proposed_stake
-
-    def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float,
-                            entry_tag: Optional[str], **kwargs) -> bool:
-        return True
-
-    def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float,
-                           entry_tag: Optional[str], **kwargs) -> float:
-        return current_rate
-'''
-    )
-
-    # Ensure no unintended function renaming.
-    assert "populate_entry_trend" not in modified_code
-    # Check INTERFACE_VERSION is inserted correctly.
-    assert "INTERFACE_VERSION = 3" in modified_code
-    assert "class AwesomeStrategy(IStrategy):\n    INTERFACE_VERSION = 3" in modified_code
-
-    # Check Optional conversion for parameters.
-    assert "min_stake: float | None" in modified_code
-    assert "entry_tag: str | None" in modified_code
-    # Check additional parameter insertion.
-    assert "side: str" in modified_code
-
-    # Verify function signature adjustments.
-    assert "def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float," in modified_code
-    assert "side: str, **kwargs)" in modified_code
-
-    assert "def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float," in modified_code
-    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code
-
-    assert "def custom_entry_price(self, pair: str, current_time: datetime, current_rate: float," in modified_code
-    assert "entry_tag: str | None, side: str, **kwargs)" in modified_code
 
 
 def test_side_parameter_not_duplicated(default_conf, caplog) -> None:
