@@ -70,7 +70,7 @@ dependencies = [
     "python-dateutil",
     "pytz",
     "packaging",
-    "freqtrade-client"
+    "freqtrade-client",
 ]
 
 [project.optional-dependencies]
