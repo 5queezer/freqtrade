@@ -11,6 +11,3 @@ stable_baselines3==2.5.0; sys_platform != 'darwin' or platform_machine != 'x86_6
 sb3_contrib>=2.2.1
 # Progress bar for stable-baselines3 and sb3-contrib
 tqdm==4.67.1
-
-# LSTM models
-tensorflow==2.16.2

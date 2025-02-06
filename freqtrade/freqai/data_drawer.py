@@ -25,6 +25,7 @@ from freqtrade.exceptions import OperationalException
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.strategy.interface import IStrategy
 
+
 logger = logging.getLogger(__name__)
 
 FEATURE_PIPELINE = "feature_pipeline"
@@ -273,7 +274,7 @@ class FreqaiDataDrawer:
             return
 
     def set_initial_return_values(
-            self, pair: str, pred_df: DataFrame, dataframe: DataFrame
+        self, pair: str, pred_df: DataFrame, dataframe: DataFrame
     ) -> None:
         """
         Set the initial return values to the historical predictions dataframe. This avoids needing
@@ -305,7 +306,7 @@ class FreqaiDataDrawer:
         # and cut off the new_pred dataframe at that date
         common_dates = pd.merge(new_pred, hist_preds, on="date_pred", how="inner")
         if len(common_dates.index) > 0:
-            new_pred = new_pred.iloc[len(common_dates):]
+            new_pred = new_pred.iloc[len(common_dates) :]
         else:
             logger.warning(
                 "No common dates found between new predictions and historic "
@@ -328,12 +329,12 @@ class FreqaiDataDrawer:
         self.model_return_values[pair] = df_concat.tail(len(dataframe.index)).reset_index(drop=True)
 
     def append_model_predictions(
-            self,
-            pair: str,
-            predictions: DataFrame,
-            do_preds: NDArray[np.int_],
-            dk: FreqaiDataKitchen,
-            strat_df: DataFrame,
+        self,
+        pair: str,
+        predictions: DataFrame,
+        do_preds: NDArray[np.int_],
+        dk: FreqaiDataKitchen,
+        strat_df: DataFrame,
     ) -> None:
         """
         Append model predictions to historic predictions dataframe, then set the
@@ -395,7 +396,7 @@ class FreqaiDataDrawer:
         self.model_return_values[pair] = df.tail(len_df).reset_index(drop=True)
 
     def attach_return_values_to_return_dataframe(
-            self, pair: str, dataframe: DataFrame
+        self, pair: str, dataframe: DataFrame
     ) -> DataFrame:
         """
         Attach the return values to the strat dataframe
@@ -518,8 +519,6 @@ class FreqaiDataDrawer:
             model.save(save_path / f"{dk.model_filename}_model.h5")
         elif self.model_type in ["stable_baselines3", "sb3_contrib", "pytorch"]:
             model.save(save_path / f"{dk.model_filename}_model.zip")
-        elif self.model_type == 'keras':
-            model.save(save_path / f"{dk.model_filename}_model.keras")
 
         dk.data["data_path"] = str(dk.data_path)
         dk.data["model_filename"] = str(dk.model_filename)
@@ -616,9 +615,6 @@ class FreqaiDataDrawer:
             zipfile = torch.load(dk.data_path / f"{dk.model_filename}_model.zip")
             model = zipfile["pytrainer"]
             model = model.load_from_checkpoint(zipfile)
-        elif self.model_type == 'keras':
-            from tensorflow.keras.models import load_model
-            model = load_model(dk.data_path / f"{dk.model_filename}_model.keras")
 
         if not model:
             raise OperationalException(
@@ -707,7 +703,7 @@ class FreqaiDataDrawer:
                 )
 
     def get_base_and_corr_dataframes(
-            self, timerange: TimeRange, pair: str, dk: FreqaiDataKitchen
+        self, timerange: TimeRange, pair: str, dk: FreqaiDataKitchen
     ) -> tuple[dict[Any, Any], dict[Any, Any]]:
         """
         Searches through our historic_data in memory and returns the dataframes relevant

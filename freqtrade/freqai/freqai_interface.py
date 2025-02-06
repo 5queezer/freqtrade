@@ -28,6 +28,7 @@ from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.utils import get_tb_logger, plot_feature_importance, record_params
 from freqtrade.strategy.interface import IStrategy
 
+
 pd.options.mode.chained_assignment = None
 logger = logging.getLogger(__name__)
 
@@ -266,7 +267,7 @@ class IFreqaiModel(ABC):
                     self.dd.save_metric_tracker_to_disk()
 
     def start_backtesting(
-            self, dataframe: DataFrame, metadata: dict, dk: FreqaiDataKitchen, strategy: IStrategy
+        self, dataframe: DataFrame, metadata: dict, dk: FreqaiDataKitchen, strategy: IStrategy
     ) -> FreqaiDataKitchen:
         """
         The main broad execution for backtesting. For backtesting, each pair enters and then gets
@@ -294,7 +295,7 @@ class IFreqaiModel(ABC):
         # following tr_train. Both of these windows slide through the
         # entire backtest
         for tr_train, tr_backtest in zip(
-                dk.training_timeranges, dk.backtesting_timeranges, strict=False
+            dk.training_timeranges, dk.backtesting_timeranges, strict=False
         ):
             (_, _) = self.dd.get_pair_dict_info(pair)
             train_it += 1
@@ -302,9 +303,9 @@ class IFreqaiModel(ABC):
             self.training_timerange = tr_train
             len_backtest_df = len(
                 dataframe.loc[
-                (dataframe["date"] >= tr_backtest.startdt)
-                & (dataframe["date"] < tr_backtest.stopdt),
-                :,
+                    (dataframe["date"] >= tr_backtest.startdt)
+                    & (dataframe["date"] < tr_backtest.stopdt),
+                    :,
                 ]
             )
 
@@ -399,7 +400,7 @@ class IFreqaiModel(ABC):
         return dk
 
     def start_live(
-            self, dataframe: DataFrame, metadata: dict, strategy: IStrategy, dk: FreqaiDataKitchen
+        self, dataframe: DataFrame, metadata: dict, strategy: IStrategy, dk: FreqaiDataKitchen
     ) -> FreqaiDataKitchen:
         """
         The main broad execution for dry/live. This function will check if a retraining should be
@@ -468,7 +469,7 @@ class IFreqaiModel(ABC):
         return dk
 
     def build_strategy_return_arrays(
-            self, dataframe: DataFrame, dk: FreqaiDataKitchen, pair: str, trained_timestamp: int
+        self, dataframe: DataFrame, dk: FreqaiDataKitchen, pair: str, trained_timestamp: int
     ) -> None:
         # hold the historical predictions in memory so we are sending back
         # correct array to strategy
@@ -495,7 +496,7 @@ class IFreqaiModel(ABC):
         else:
             # remaining predictions are made only on the most recent candles for performance and
             # historical accuracy reasons.
-            pred_df, do_preds = self.predict(dataframe.iloc[-self.CONV_WIDTH:], dk, first=False)
+            pred_df, do_preds = self.predict(dataframe.iloc[-self.CONV_WIDTH :], dk, first=False)
 
         if self.freqai_info.get("fit_live_predictions_candles", 0) and self.live:
             self.fit_live_predictions(dk, pair)
@@ -576,8 +577,6 @@ class IFreqaiModel(ABC):
             file_type = ".joblib"
         elif self.dd.model_type in ["stable_baselines3", "sb3_contrib", "pytorch"]:
             file_type = ".zip"
-        elif self.dd.model_type == "keras":
-            file_type = ".keras"
 
         path_to_modelfile = Path(dk.data_path / f"{dk.model_filename}_model{file_type}")
         file_exists = path_to_modelfile.is_file()
@@ -595,12 +594,12 @@ class IFreqaiModel(ABC):
         self.full_path.mkdir(parents=True, exist_ok=True)
 
     def extract_data_and_train_model(
-            self,
-            new_trained_timerange: TimeRange,
-            pair: str,
-            strategy: IStrategy,
-            dk: FreqaiDataKitchen,
-            data_load_timerange: TimeRange,
+        self,
+        new_trained_timerange: TimeRange,
+        pair: str,
+        strategy: IStrategy,
+        dk: FreqaiDataKitchen,
+        data_load_timerange: TimeRange,
     ):
         """
         Retrieve data and train model.
@@ -646,7 +645,7 @@ class IFreqaiModel(ABC):
         self.dd.purge_old_models()
 
     def set_initial_historic_predictions(
-            self, pred_df: DataFrame, dk: FreqaiDataKitchen, pair: str, strat_df: DataFrame
+        self, pred_df: DataFrame, dk: FreqaiDataKitchen, pair: str, strat_df: DataFrame
     ) -> None:
         """
         This function is called only if the datadrawer failed to load an
@@ -831,7 +830,7 @@ class IFreqaiModel(ABC):
             self.current_candle = self.dd.current_candle
 
     def ensure_data_exists(
-            self, len_dataframe_backtest: int, tr_backtest: TimeRange, pair: str
+        self, len_dataframe_backtest: int, tr_backtest: TimeRange, pair: str
     ) -> bool:
         """
         Check if the dataframe is empty, if not, report useful information to user.
@@ -850,7 +849,7 @@ class IFreqaiModel(ABC):
         return True
 
     def log_backtesting_progress(
-            self, tr_train: TimeRange, pair: str, train_it: int, total_trains: int
+        self, tr_train: TimeRange, pair: str, train_it: int, total_trains: int
     ):
         """
         Log the backtesting progress so user knows how many pairs have been trained and
@@ -882,18 +881,18 @@ class IFreqaiModel(ABC):
                 col
                 for col in dk.full_df.columns
                 if (
-                        col.startswith("&")
-                        and not (col.startswith("&") and col.endswith("_mean"))
-                        and not (col.startswith("&") and col.endswith("_std"))
-                        and col not in self.dk.data["extra_returns_per_train"]
+                    col.startswith("&")
+                    and not (col.startswith("&") and col.endswith("_mean"))
+                    and not (col.startswith("&") and col.endswith("_std"))
+                    and col not in self.dk.data["extra_returns_per_train"]
                 )
             ]
 
             for index in range(len(dk.full_df)):
                 if index >= fit_live_predictions_candles:
                     self.dd.historic_predictions[self.dk.pair] = dk.full_df.iloc[
-                                                                 index - fit_live_predictions_candles: index
-                                                                 ]
+                        index - fit_live_predictions_candles : index
+                    ]
                     self.fit_live_predictions(self.dk, self.dk.pair)
                     for label in label_columns:
                         if dk.full_df[label].dtype == object:
@@ -930,7 +929,7 @@ class IFreqaiModel(ABC):
             self.update_metadata(metadata)
 
     def start_backtesting_from_historic_predictions(
-            self, dataframe: DataFrame, metadata: dict, dk: FreqaiDataKitchen
+        self, dataframe: DataFrame, metadata: dict, dk: FreqaiDataKitchen
     ) -> FreqaiDataKitchen:
         """
         :param dataframe: DataFrame = strategy passed dataframe
@@ -978,7 +977,7 @@ class IFreqaiModel(ABC):
 
     @abstractmethod
     def predict(
-            self, unfiltered_df: DataFrame, dk: FreqaiDataKitchen, **kwargs
+        self, unfiltered_df: DataFrame, dk: FreqaiDataKitchen, **kwargs
     ) -> tuple[DataFrame, NDArray[np.int_]]:
         """
         Filter the prediction features data and predict with it.
