@@ -19,7 +19,6 @@ from freqtrade.constants import UNLIMITED_STAKE_AMOUNT
 from freqtrade.enums import RunMode, TradingMode
 from freqtrade.exceptions import ConfigurationError
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -103,9 +102,9 @@ def _validate_unlimited_amount(conf: dict[str, Any]) -> None:
     :raise: ConfigurationError if config validation failed
     """
     if (
-        not conf.get("edge", {}).get("enabled")
-        and conf.get("max_open_trades") == float("inf")
-        and conf.get("stake_amount") == UNLIMITED_STAKE_AMOUNT
+            not conf.get("edge", {}).get("enabled")
+            and conf.get("max_open_trades") == float("inf")
+            and conf.get("stake_amount") == UNLIMITED_STAKE_AMOUNT
     ):
         raise ConfigurationError("`max_open_trades` and `stake_amount` cannot both be unlimited.")
 
@@ -116,12 +115,12 @@ def _validate_price_config(conf: dict[str, Any]) -> None:
     """
     # TODO: The below could be an enforced setting when using market orders
     if conf.get("order_types", {}).get("entry") == "market" and conf.get("entry_pricing", {}).get(
-        "price_side"
+            "price_side"
     ) not in ("ask", "other"):
         raise ConfigurationError('Market entry orders require entry_pricing.price_side = "other".')
 
     if conf.get("order_types", {}).get("exit") == "market" and conf.get("exit_pricing", {}).get(
-        "price_side"
+            "price_side"
     ) not in ("bid", "other"):
         raise ConfigurationError('Market exit orders require exit_pricing.price_side = "other".')
 
@@ -187,9 +186,9 @@ def _validate_whitelist(conf: dict[str, Any]) -> None:
 
     for pl in conf.get("pairlists", [{"method": "StaticPairList"}]):
         if (
-            isinstance(pl, dict)
-            and pl.get("method") == "StaticPairList"
-            and not conf.get("exchange", {}).get("pair_whitelist")
+                isinstance(pl, dict)
+                and pl.get("method") == "StaticPairList"
+                and not conf.get("exchange", {}).get("pair_whitelist")
         ):
             raise ConfigurationError("StaticPairList requires pair_whitelist to be set.")
 
@@ -339,7 +338,7 @@ def _validate_freqai_hyperopt(conf: dict[str, Any]) -> None:
 def _validate_freqai_include_timeframes(conf: dict[str, Any], preliminary: bool) -> None:
     freqai_enabled = conf.get("freqai", {}).get("enabled", False)
     if freqai_enabled:
-        main_tf = conf.get("timeframe", "5m")
+        main_tf = conf.get("timeframe", "1h")
         freqai_include_timeframes = (
             conf.get("freqai", {}).get("feature_parameters", {}).get("include_timeframes", [])
         )
