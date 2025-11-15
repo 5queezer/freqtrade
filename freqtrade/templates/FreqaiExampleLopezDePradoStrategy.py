@@ -115,7 +115,8 @@ class FreqaiExampleLopezDePradoStrategy(IStrategy):
         This is the key difference from standard FreqAI strategies.
         """
         # Get close prices as pandas Series with DatetimeIndex
-        close = dataframe['close'].copy()
+        # IMPORTANT: Must use datetime index for triple-barrier calculation
+        close = pd.Series(dataframe['close'].values, index=dataframe['date'])
 
         # Define events (potential trade entry points)
         # For this example, we'll use every candle as a potential entry
@@ -136,17 +137,26 @@ class FreqaiExampleLopezDePradoStrategy(IStrategy):
         # 1 = profitable trade, 0 = unprofitable trade
         labels = ldp.get_bins_from_triple_barrier(barriers, close)
 
-        # Align with dataframe index
+        # Align with dataframe index by matching datetime to integer index
+        # Create mapping from datetime to integer index
+        date_to_idx = pd.Series(dataframe.index, index=dataframe['date'])
+
         dataframe['&-target'] = 0
-        dataframe.loc[labels.index, '&-target'] = labels.values
+        for dt_idx in labels.index:
+            if dt_idx in date_to_idx.index:
+                int_idx = date_to_idx.loc[dt_idx]
+                dataframe.loc[int_idx, '&-target'] = labels.loc[dt_idx]
 
         # Also store the actual return for reference (optional)
-        dataframe['&-return'] = 0.0
-        dataframe.loc[barriers.index, '&-return'] = barriers['return'].values
+        # dataframe['&-return'] = 0.0
+        # dataframe.loc[barriers.index, '&-return'] = barriers['return'].values
 
         # Store which barrier was touched (for analysis)
         dataframe['barrier_type'] = ''
-        dataframe.loc[barriers.index, 'barrier_type'] = barriers['barrier_touched'].values
+        for dt_idx in barriers.index:
+            if dt_idx in date_to_idx.index:
+                int_idx = date_to_idx.loc[dt_idx]
+                dataframe.loc[int_idx, 'barrier_type'] = barriers.loc[dt_idx, 'barrier_touched']
 
         logger.info(
             f"Triple-barrier labeling: "
