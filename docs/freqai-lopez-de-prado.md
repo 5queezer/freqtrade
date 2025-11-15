@@ -132,9 +132,53 @@ Typical d values: 0.3-0.7. Lower = more memory preserved.
 | Fractional Diff | +5-10% | Price features |
 | Sample Uniqueness | +15-25% | Overlapping labels |
 
+## Triple-Barrier Labeling
+
+Most critical Lopez de Prado method - creates realistic labels based on:
+- **Profit target** (upper barrier): Exit when price hits target
+- **Stop loss** (lower barrier): Exit when price hits stop
+- **Time limit** (vertical barrier): Exit after maximum holding period
+
+**Why better than simple forward returns:**
+- Mirrors actual trading (traders use stops/targets)
+- Handles both profit and loss scenarios
+- Accounts for maximum holding time
+- Creates more balanced labels
+
+**Usage in `set_freqai_targets()`:**
+
+```python
+from freqtrade.freqai import lopez_de_prado as ldp
+
+def set_freqai_targets(self, dataframe: DataFrame, metadata: dict, **kwargs) -> DataFrame:
+    close = dataframe['close']
+    events = close.index  # Or use specific entry signals
+
+    barriers = ldp.get_events_triple_barrier(
+        close=close,
+        events=events,
+        profit_target=0.02,     # 2% profit target
+        stop_loss=-0.01,        # 1% stop loss
+        vertical_barrier_timedelta=pd.Timedelta(hours=24)  # Max 24h hold
+    )
+
+    # Binary labels: 1=profitable, 0=loss
+    labels = ldp.get_bins_from_triple_barrier(barriers, close)
+    dataframe['&-target'] = 0
+    dataframe.loc[labels.index, '&-target'] = labels.values
+
+    return dataframe
+```
+
+**Performance:** O(n×m) where n=events, m=candles until barrier. For >10k events, consider:
+- Subsample events (e.g., every 10th candle)
+- Use only high-confidence signals as events
+- Increase timeframe (5m → 15m)
+
 ## References
 
 - Lopez de Prado, M. (2018). *Advances in Financial Machine Learning*. Wiley.
+  - Chapter 3: Triple-Barrier Method
   - Chapter 4: Sample Weights
   - Chapter 5: Fractional Differentiation
   - Chapter 7: Cross-Validation in Finance

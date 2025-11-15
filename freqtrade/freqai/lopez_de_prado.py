@@ -755,6 +755,167 @@ def get_optimal_frac_diff_order(
     return max_d
 
 
+def get_events_triple_barrier(
+    close: pd.Series,
+    events: pd.DatetimeIndex,
+    profit_target: float,
+    stop_loss: float,
+    vertical_barrier_timedelta: Optional[pd.Timedelta] = None,
+    side: Optional[pd.Series] = None,
+) -> pd.DataFrame:
+    """
+    Triple-barrier labeling method for financial ML.
+
+    From: Advances in Financial Machine Learning, Chapter 3
+
+    Labels trades based on which barrier is touched first:
+    - Upper barrier (profit_target): Label = 1 (profitable)
+    - Lower barrier (stop_loss): Label = -1 (loss)
+    - Vertical barrier (time): Label = sign(return) (timeout)
+
+    Parameters
+    ----------
+    close : pd.Series
+        Close prices indexed by timestamp
+    events : pd.DatetimeIndex
+        Timestamps when positions would be opened
+    profit_target : float
+        Upper barrier (e.g., 0.02 for 2% profit target)
+    stop_loss : float
+        Lower barrier (e.g., -0.01 for 1% stop loss)
+    vertical_barrier_timedelta : pd.Timedelta, optional
+        Maximum holding period. If None, no time limit.
+    side : pd.Series, optional
+        Predicted side (1=long, -1=short). If provided, barriers are adjusted.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns:
+        - t1: timestamp when barrier was touched
+        - label: 1 (profit), -1 (loss), or sign(return) (timeout)
+        - return: actual return achieved
+        - barrier_touched: 'profit', 'stop', or 'vertical'
+
+    Examples
+    --------
+    >>> close = pd.Series(prices, index=timestamps)
+    >>> events = close.index[::10]  # Every 10th bar
+    >>> barriers = get_events_triple_barrier(
+    ...     close, events,
+    ...     profit_target=0.02,
+    ...     stop_loss=-0.01,
+    ...     vertical_barrier_timedelta=pd.Timedelta(hours=24)
+    ... )
+    """
+    # Initialize output
+    out = pd.DataFrame(index=events)
+    out['t1'] = pd.NaT
+    out['label'] = 0
+    out['return'] = 0.0
+    out['barrier_touched'] = ''
+
+    for loc, t0 in enumerate(events):
+        # Get future prices after event
+        df_future = close[close.index > t0]
+
+        if len(df_future) == 0:
+            continue
+
+        # Set vertical barrier
+        if vertical_barrier_timedelta is not None:
+            t1_vertical = t0 + vertical_barrier_timedelta
+            df_future = df_future[df_future.index <= t1_vertical]
+
+        if len(df_future) == 0:
+            continue
+
+        # Calculate returns from entry price
+        entry_price = close.loc[t0]
+        returns = (df_future - entry_price) / entry_price
+
+        # Adjust barriers based on side if provided
+        if side is not None and t0 in side.index:
+            position_side = side.loc[t0]
+            # For short positions, flip the returns
+            if position_side < 0:
+                returns = -returns
+
+        # Find first touch of profit target
+        profit_touch = returns[returns >= profit_target]
+        # Find first touch of stop loss
+        stop_touch = returns[returns <= stop_loss]
+
+        # Determine which barrier was touched first
+        t1 = None
+        label = 0
+        barrier = ''
+
+        if len(profit_touch) > 0 and len(stop_touch) > 0:
+            # Both touched, use whichever came first
+            if profit_touch.index[0] <= stop_touch.index[0]:
+                t1 = profit_touch.index[0]
+                label = 1
+                barrier = 'profit'
+            else:
+                t1 = stop_touch.index[0]
+                label = -1
+                barrier = 'stop'
+        elif len(profit_touch) > 0:
+            t1 = profit_touch.index[0]
+            label = 1
+            barrier = 'profit'
+        elif len(stop_touch) > 0:
+            t1 = stop_touch.index[0]
+            label = -1
+            barrier = 'stop'
+        else:
+            # Vertical barrier (timeout)
+            t1 = df_future.index[-1]
+            final_return = returns.iloc[-1]
+            label = 1 if final_return > 0 else -1
+            barrier = 'vertical'
+
+        if t1 is not None:
+            out.loc[t0, 't1'] = t1
+            out.loc[t0, 'label'] = label
+            out.loc[t0, 'return'] = (close.loc[t1] - entry_price) / entry_price
+            out.loc[t0, 'barrier_touched'] = barrier
+
+    # Remove events where no barrier was touched
+    out = out[out['t1'].notna()]
+
+    return out
+
+
+def get_bins_from_triple_barrier(
+    events: pd.DataFrame,
+    close: pd.Series,
+) -> pd.Series:
+    """
+    Convert triple-barrier events to classification bins.
+
+    Parameters
+    ----------
+    events : pd.DataFrame
+        Output from get_events_triple_barrier()
+    close : pd.Series
+        Close prices
+
+    Returns
+    -------
+    pd.Series
+        Binary labels: 1 (profit), 0 (loss/neutral)
+    """
+    # For classification, convert to binary
+    # 1 = profitable (label == 1)
+    # 0 = loss or neutral (label <= 0)
+    bins = pd.Series(index=events.index, dtype=int)
+    bins[:] = (events['label'] > 0).astype(int)
+
+    return bins
+
+
 def get_meta_labels(
     events: pd.DataFrame,
     predictions: pd.Series,

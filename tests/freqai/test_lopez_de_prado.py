@@ -439,3 +439,167 @@ class TestOptimalFracDiff:
 
         # Should need significant differencing
         assert optimal_d >= 0.3
+
+
+class TestTripleBarrier:
+    """Test triple-barrier labeling."""
+
+    def test_triple_barrier_basic(self):
+        """Test basic triple-barrier labeling."""
+        # Create price series with clear profit/loss patterns
+        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
+        
+        # Price goes from 100 to 105 (5% gain)
+        prices = pd.Series(np.linspace(100, 105, 100), index=dates)
+        
+        # Create event at start
+        events = pd.DatetimeIndex([dates[0]])
+        
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.03,  # 3% profit
+            stop_loss=-0.02,     # 2% loss
+            vertical_barrier_timedelta=pd.Timedelta(hours=50)
+        )
+        
+        assert len(barriers) == 1
+        assert 't1' in barriers.columns
+        assert 'label' in barriers.columns
+        assert 'barrier_touched' in barriers.columns
+        
+        # Should hit profit target
+        assert barriers.iloc[0]['label'] == 1
+        assert barriers.iloc[0]['barrier_touched'] == 'profit'
+
+    def test_triple_barrier_stop_loss(self):
+        """Test that stop loss barrier works."""
+        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
+        
+        # Price drops from 100 to 95 (5% loss)
+        prices = pd.Series(np.linspace(100, 95, 100), index=dates)
+        
+        events = pd.DatetimeIndex([dates[0]])
+        
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.03,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=50)
+        )
+        
+        assert len(barriers) == 1
+        # Should hit stop loss
+        assert barriers.iloc[0]['label'] == -1
+        assert barriers.iloc[0]['barrier_touched'] == 'stop'
+
+    def test_triple_barrier_vertical(self):
+        """Test vertical barrier (timeout)."""
+        dates = pd.date_range('2024-01-01', periods=50, freq='1h')
+        
+        # Price moves slightly but doesn't hit barriers
+        prices = pd.Series(100 + np.random.randn(50) * 0.1, index=dates)
+        
+        events = pd.DatetimeIndex([dates[0]])
+        
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.10,  # 10% profit (won't hit)
+            stop_loss=-0.10,     # 10% loss (won't hit)
+            vertical_barrier_timedelta=pd.Timedelta(hours=20)
+        )
+        
+        assert len(barriers) == 1
+        # Should timeout at vertical barrier
+        assert barriers.iloc[0]['barrier_touched'] == 'vertical'
+        # Label should be sign of final return
+        assert barriers.iloc[0]['label'] in [-1, 1]
+
+    def test_triple_barrier_multiple_events(self):
+        """Test multiple events."""
+        dates = pd.date_range('2024-01-01', periods=200, freq='1h')
+        
+        # Create price series with multiple patterns
+        prices = pd.Series(
+            100 + np.cumsum(np.random.randn(200) * 0.5),
+            index=dates
+        )
+        
+        # Create events every 20 candles
+        events = pd.DatetimeIndex(dates[::20])
+        
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.02,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=10)
+        )
+        
+        # Should have barriers for most events
+        assert len(barriers) >= len(events) * 0.8  # At least 80%
+        
+        # All labels should be -1, 0, or 1
+        assert barriers['label'].isin([-1, 1]).all()
+        
+        # All should have touched a barrier
+        assert barriers['barrier_touched'].isin(['profit', 'stop', 'vertical']).all()
+
+    def test_triple_barrier_with_side(self):
+        """Test triple-barrier with position side (long/short)."""
+        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
+        
+        # Price goes up
+        prices = pd.Series(np.linspace(100, 105, 100), index=dates)
+        
+        events = pd.DatetimeIndex([dates[0], dates[50]])
+        
+        # First event is long, second is short
+        side = pd.Series([1, -1], index=events)
+        
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.03,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=30),
+            side=side
+        )
+        
+        assert len(barriers) == 2
+        
+        # Long position should profit (price going up)
+        assert barriers.iloc[0]['label'] == 1
+        
+        # Short position should lose (price going up)
+        assert barriers.iloc[1]['label'] == -1
+
+    def test_bins_from_triple_barrier(self):
+        """Test conversion to binary bins."""
+        dates = pd.date_range('2024-01-01', periods=10, freq='1h')
+        prices = pd.Series([100, 102, 101, 103, 102, 104, 103, 105, 104, 106], index=dates)
+        
+        events = pd.DatetimeIndex([dates[0], dates[2], dates[4]])
+        
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.02,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=3)
+        )
+        
+        bins = get_bins_from_triple_barrier(barriers, prices)
+        
+        # Should be binary (0 or 1)
+        assert bins.isin([0, 1]).all()
+        
+        # Length should match events
+        assert len(bins) == len(barriers)
+        
+        # Profitable events (label=1) should have bin=1
+        profitable = barriers[barriers['label'] == 1].index
+        if len(profitable) > 0:
+            assert bins.loc[profitable].all() == 1
