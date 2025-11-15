@@ -810,7 +810,8 @@ def get_events_triple_barrier(
     """
     # Initialize output
     out = pd.DataFrame(index=events)
-    out['t1'] = pd.NaT
+    # Use the same dtype as the close series index to avoid incompatible dtype warning
+    out['t1'] = pd.Series(pd.NaT, index=events, dtype=close.index.dtype)
     out['label'] = 0
     out['return'] = 0.0
     out['barrier_touched'] = ''
