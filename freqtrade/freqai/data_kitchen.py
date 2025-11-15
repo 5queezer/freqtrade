@@ -517,9 +517,9 @@ class FreqaiDataKitchen:
             append_df[label] = predictions[label]
             if append_df[label].dtype == object:
                 continue
-            if "labels_mean" in self.data:
+            if "labels_mean" in self.data and label in self.data["labels_mean"]:
                 append_df[f"{label}_mean"] = self.data["labels_mean"][label]
-            if "labels_std" in self.data:
+            if "labels_std" in self.data and label in self.data["labels_std"]:
                 append_df[f"{label}_std"] = self.data["labels_std"][label]
 
         for extra_col in self.data["extra_returns_per_train"]:
