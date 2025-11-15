@@ -531,28 +531,15 @@ class IFreqaiModel(ABC):
             )
 
     def define_data_pipeline(self, threads=-1) -> Pipeline:
-        """
-        Define the data preprocessing pipeline.
-
-        Now includes Lopez de Prado's Fractional Differentiation for
-        making features stationary while preserving memory.
-        """
+        """Define the data preprocessing pipeline."""
         ft_params = self.freqai_info["feature_parameters"]
-
-        # Initial steps
         pipe_steps = []
 
-        # Lopez de Prado: Fractional Differentiation (applied BEFORE scaling)
-        # This makes features stationary while preserving information
         if ft_params.get("ldp_fractional_differentiation", False):
             frac_d = ft_params.get("ldp_frac_diff_order", 0.5)
             frac_threshold = ft_params.get("ldp_frac_diff_threshold", 0.01)
             frac_columns = ft_params.get("ldp_frac_diff_columns", None)
-
-            logger.info(
-                f"Adding Fractional Differentiation to pipeline: d={frac_d}, "
-                f"threshold={frac_threshold}"
-            )
+            logger.info(f"Fractional differentiation: d={frac_d}")
 
             pipe_steps.append((
                 "frac_diff",
@@ -563,7 +550,6 @@ class IFreqaiModel(ABC):
                 ))
             ))
 
-        # Standard preprocessing
         pipe_steps.extend([
             ("const", ds.VarianceThreshold(threshold=0)),
             ("scaler", SKLearnWrapper(MinMaxScaler(feature_range=(-1, 1)))),
