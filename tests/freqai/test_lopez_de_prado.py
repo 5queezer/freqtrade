@@ -2,22 +2,25 @@
 Unit tests for Lopez de Prado utilities in FreqAI
 """
 
+from datetime import timedelta
+
 import numpy as np
 import pandas as pd
 import pytest
-from datetime import datetime, timedelta
 
 from freqtrade.freqai.lopez_de_prado import (
-    PurgedKFold,
     CombinatorialPurgedKFold,
-    get_sample_weights_by_time_decay,
-    get_sample_weights_by_returns,
-    get_sample_weights_by_uniqueness,
-    get_num_concurrent_labels,
-    seq_bootstrap,
+    PurgedKFold,
     frac_diff_ffd,
-    get_optimal_frac_diff_order,
+    get_bins_from_triple_barrier,
+    get_events_triple_barrier,
     get_meta_labels,
+    get_num_concurrent_labels,
+    get_optimal_frac_diff_order,
+    get_sample_weights_by_returns,
+    get_sample_weights_by_time_decay,
+    get_sample_weights_by_uniqueness,
+    seq_bootstrap,
 )
 
 
@@ -25,100 +28,63 @@ class TestPurgedKFold:
     """Test Purged K-Fold Cross-Validation."""
 
     def test_basic_split(self):
-        """Test basic splitting without purging."""
-        # Create sample data
         dates = pd.date_range('2020-01-01', periods=100, freq='D')
-        X = pd.DataFrame({
-            'feature1': np.random.randn(100),
-            'feature2': np.random.randn(100),
-        }, index=dates)
-
+        X = pd.DataFrame({'feature1': np.random.randn(100), 'feature2': np.random.randn(100)},
+                         index=dates)
         cv = PurgedKFold(n_splits=5, pct_embargo=0.01)
-
         splits = list(cv.split(X))
 
-        # Should have 5 splits
         assert len(splits) == 5
-
-        # Each split should have train and test indices
         for train_idx, test_idx in splits:
             assert len(train_idx) > 0
             assert len(test_idx) > 0
-            # No overlap between train and test
             assert len(set(train_idx) & set(test_idx)) == 0
-            # Train indices should be before test indices (temporal order)
-            # Note: with embargo, train can be before AND after test
-            # but there should be a gap
 
     def test_embargo_period(self):
-        """Test that embargo period creates gap after test set."""
         dates = pd.date_range('2020-01-01', periods=100, freq='D')
         X = pd.DataFrame({'feat': np.random.randn(100)}, index=dates)
-
-        # 10% embargo
         cv = PurgedKFold(n_splits=3, pct_embargo=0.10)
 
         for train_idx, test_idx in cv.split(X):
             test_end = test_idx.max()
-            # Find training samples after test set
             train_after_test = train_idx[train_idx > test_end]
-
             if len(train_after_test) > 0:
-                # Gap between test end and next training sample should be ~10% of dataset
                 gap = train_after_test.min() - test_end
                 expected_gap = int(0.10 * len(X))
-                # Allow some tolerance
                 assert gap >= expected_gap - 2
 
     def test_purging_with_overlapping_labels(self):
-        """Test purging removes overlapping samples."""
         dates = pd.date_range('2020-01-01', periods=50, freq='D')
         X = pd.DataFrame({'feat': np.random.randn(50)}, index=dates)
-
-        # Create overlapping labels (each label spans 5 days)
-        close_times = pd.Series(index=dates)
-        for i, date in enumerate(dates):
-            close_times.iloc[i] = date + timedelta(days=5)
+        close_times = pd.Series([date + timedelta(days=5) for date in dates], index=dates)
 
         cv = PurgedKFold(n_splits=5, samples_info_sets=close_times, pct_embargo=0.01)
 
         for train_idx, test_idx in cv.split(X):
-            # Check that training samples don't overlap with test samples
             train_times = close_times.iloc[train_idx]
             test_times = close_times.iloc[test_idx]
-
-            # No train sample should have close time during test period
             test_min = test_times.index.min()
             test_max = test_times.max()
-
             overlapping_train = train_times[
                 (train_times.index >= test_min) & (train_times.index <= test_max)
             ]
-
-            # Should be minimal or no overlap (some allowed due to embargo)
-            # The key is that overlapping samples should be purged
             assert len(overlapping_train) == 0 or len(overlapping_train) < len(test_idx) * 0.1
 
     def test_get_n_splits(self):
-        """Test get_n_splits returns correct value."""
         cv = PurgedKFold(n_splits=7)
         assert cv.get_n_splits() == 7
 
     def test_invalid_params(self):
-        """Test that invalid parameters raise errors."""
         with pytest.raises(ValueError):
-            PurgedKFold(n_splits=1)  # Too few splits
+            PurgedKFold(n_splits=1)
 
 
 class TestCombinatorialPurgedKFold:
     """Test Combinatorial Purged K-Fold Cross-Validation."""
 
     def test_number_of_splits(self):
-        """Test correct number of combinatorial splits."""
         dates = pd.date_range('2020-01-01', periods=100, freq='D')
         X = pd.DataFrame({'feat': np.random.randn(100)}, index=dates)
-
-        # C(6, 2) = 15 combinations
         cv = CombinatorialPurgedKFold(n_splits=6, n_test_splits=2)
 
         splits = list(cv.split(X))
@@ -126,116 +92,67 @@ class TestCombinatorialPurgedKFold:
         assert cv.get_n_splits() == 15
 
     def test_splits_are_different(self):
-        """Test that each split is different."""
         dates = pd.date_range('2020-01-01', periods=100, freq='D')
         X = pd.DataFrame({'feat': np.random.randn(100)}, index=dates)
-
         cv = CombinatorialPurgedKFold(n_splits=5, n_test_splits=2)
 
         splits = list(cv.split(X))
-
-        # Convert to tuples for hashing
         test_sets = [tuple(sorted(test_idx)) for _, test_idx in splits]
-
-        # All test sets should be unique
         assert len(test_sets) == len(set(test_sets))
 
     def test_invalid_params(self):
-        """Test invalid parameter combinations."""
         with pytest.raises(ValueError):
-            CombinatorialPurgedKFold(n_splits=2)  # Too few
-
+            CombinatorialPurgedKFold(n_splits=2)
         with pytest.raises(ValueError):
-            CombinatorialPurgedKFold(n_splits=5, n_test_splits=5)  # test >= total
+            CombinatorialPurgedKFold(n_splits=5, n_test_splits=5)
 
 
 class TestSampleWeights:
     """Test sample weighting functions."""
 
     def test_time_decay_weights(self):
-        """Test time decay weighting."""
         dates = pd.date_range('2020-01-01', periods=100, freq='D')
-
         weights = get_sample_weights_by_time_decay(dates, decay_factor=1.0)
 
-        # Should sum to 1
         assert np.isclose(weights.sum(), 1.0)
-
-        # More recent samples should have higher weights
         assert weights[-1] > weights[0]
-
-        # All weights should be positive
         assert np.all(weights > 0)
 
     def test_uniform_weights_when_no_decay(self):
-        """Test uniform weights when decay_factor=0."""
         dates = pd.date_range('2020-01-01', periods=100, freq='D')
-
         weights = get_sample_weights_by_time_decay(dates, decay_factor=0.0)
 
-        # All weights should be equal
         assert np.allclose(weights, weights[0])
         assert np.isclose(weights.sum(), 1.0)
 
     def test_return_based_weights(self):
-        """Test volatility-based weighting."""
-        # Create returns with varying volatility
         returns = pd.Series(np.concatenate([
-            np.random.randn(50) * 0.01,  # Low volatility
-            np.random.randn(50) * 0.05,  # High volatility
+            np.random.randn(50) * 0.01,
+            np.random.randn(50) * 0.05,
         ]))
-
         weights = get_sample_weights_by_returns(returns, span=10)
 
-        # Should sum to 1
         assert np.isclose(weights.sum(), 1.0)
-
-        # All weights should be positive
         assert np.all(weights > 0)
 
     def test_uniqueness_weights(self):
-        """Test sample uniqueness weighting."""
         dates = pd.date_range('2020-01-01', periods=20, freq='D')
-
-        # Create labels with varying overlap
         close_times = pd.Series(index=dates)
         for i, date in enumerate(dates):
-            # First 10: short duration (1 day) - high uniqueness
-            # Last 10: long duration (5 days) - low uniqueness
-            if i < 10:
-                close_times.iloc[i] = date + timedelta(days=1)
-            else:
-                close_times.iloc[i] = date + timedelta(days=5)
+            close_times.iloc[i] = date + timedelta(days=1 if i < 10 else 5)
 
         weights = get_sample_weights_by_uniqueness(close_times)
 
-        # Should sum to 1
         assert np.isclose(weights.sum(), 1.0)
-
-        # All weights should be positive
         assert np.all(weights > 0)
-
-        # First samples (less overlap) should have higher weights
-        avg_weight_first_10 = weights.iloc[:10].mean()
-        avg_weight_last_10 = weights.iloc[10:].mean()
-
-        assert avg_weight_first_10 > avg_weight_last_10
+        assert weights.iloc[:10].mean() > weights.iloc[10:].mean()
 
     def test_concurrent_labels(self):
-        """Test concurrent label counting."""
         dates = pd.date_range('2020-01-01', periods=10, freq='D')
-
-        # Create overlapping labels
-        close_times = pd.Series(index=dates)
-        for i, date in enumerate(dates):
-            close_times.iloc[i] = date + timedelta(days=3)
-
+        close_times = pd.Series([date + timedelta(days=3) for date in dates], index=dates)
         concurrent = get_num_concurrent_labels(close_times)
 
-        # All should be positive
         assert np.all(concurrent > 0)
-
-        # Middle samples should have more concurrency than edges
         assert concurrent.iloc[5] >= concurrent.iloc[0]
 
 
@@ -243,49 +160,36 @@ class TestSequentialBootstrap:
     """Test Sequential Bootstrap."""
 
     def test_bootstrap_size(self):
-        """Test that bootstrap returns correct number of samples."""
         X = pd.DataFrame(
             np.random.randn(100, 5),
             index=pd.date_range('2020-01-01', periods=100, freq='D')
         )
-
         indices = seq_bootstrap(X, n_samples=50, random_state=42)
 
         assert len(indices) == 50
-        # Indices should be valid
         assert np.all(indices >= 0)
         assert np.all(indices < len(X))
 
     def test_bootstrap_respects_weights(self):
-        """Test that bootstrap respects sample weights."""
         X = pd.DataFrame(
             np.random.randn(100, 5),
             index=pd.date_range('2020-01-01', periods=100, freq='D')
         )
-
-        # Give much higher weight to first 10 samples
         weights = pd.Series(0.01, index=X.index)
         weights.iloc[:10] = 10.0
         weights = weights / weights.sum()
 
         indices = seq_bootstrap(X, sample_weights=weights, n_samples=1000, random_state=42)
-
-        # Count how many times first 10 samples were selected
         first_10_count = np.sum(indices < 10)
-
-        # Should be much more than 10% (which would be expected for uniform sampling)
-        assert first_10_count > 100  # Expect > 10% due to high weights
+        assert first_10_count > 100
 
     def test_bootstrap_reproducibility(self):
-        """Test that random_state gives reproducible results."""
         X = pd.DataFrame(
             np.random.randn(50, 3),
             index=pd.date_range('2020-01-01', periods=50, freq='D')
         )
-
         indices1 = seq_bootstrap(X, n_samples=30, random_state=42)
         indices2 = seq_bootstrap(X, n_samples=30, random_state=42)
-
         assert np.array_equal(indices1, indices2)
 
 
@@ -293,26 +197,16 @@ class TestFractionalDifferentiation:
     """Test Fractional Differentiation."""
 
     def test_frac_diff_basic(self):
-        """Test basic fractional differentiation."""
-        # Create a simple trending series
         series = pd.Series(np.log(np.arange(1, 101, dtype=float)))
-
-        # Apply fractional differentiation
         diff_series = frac_diff_ffd(series, d=0.5, threshold=0.01)
 
-        # Result should be shorter (lost some samples at start)
         assert len(diff_series) < len(series)
-
-        # Should not be all NaN
         assert diff_series.notna().sum() > 0
 
     def test_frac_diff_d_equals_zero(self):
-        """Test that d=0 returns approximately original series."""
         series = pd.Series(np.random.randn(100))
-
         diff_series = frac_diff_ffd(series, d=0.0, threshold=0.01)
 
-        # Should be very close to original (after initial samples)
         common_idx = diff_series.index
         assert np.allclose(
             diff_series.loc[common_idx].values,
@@ -321,97 +215,152 @@ class TestFractionalDifferentiation:
         )
 
     def test_frac_diff_d_equals_one(self):
-        """Test that d=1.0 is similar to first difference."""
         series = pd.Series(np.random.randn(100).cumsum())
-
-        # Fractional diff with d=1
         frac_diff = frac_diff_ffd(series, d=1.0, threshold=0.01)
-
-        # Regular diff
         regular_diff = series.diff()
 
-        # Should be similar (not exact due to fixed-width window)
         common_idx = frac_diff.index
         correlation = np.corrcoef(
             frac_diff.loc[common_idx].values,
             regular_diff.loc[common_idx].dropna().values[:len(frac_diff)]
         )[0, 1]
-
-        assert correlation > 0.9  # Should be highly correlated
+        assert correlation > 0.9
 
     def test_frac_diff_stationarity(self):
-        """Test that fractional diff helps with stationarity."""
-        # Create non-stationary series (random walk)
         np.random.seed(42)
         series = pd.Series(np.random.randn(200).cumsum())
-
-        # Apply fractional differentiation
         diff_series = frac_diff_ffd(series, d=0.5, threshold=0.01)
 
-        # Variance of differenced series should be more stable
-        # Check that differenced series has lower autocorrelation
         if len(diff_series) > 1:
-            # Simple check: differenced series should have different properties
             assert diff_series.std() != series.std()
+
+
+class TestTripleBarrier:
+    """Test triple-barrier labeling."""
+
+    def test_triple_barrier_profit(self):
+        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
+        prices = pd.Series([100] + [100 + i*0.5 for i in range(1, 100)], index=dates)
+        events = pd.DatetimeIndex([dates[0]])
+
+        barriers = get_events_triple_barrier(
+            close=prices, events=events,
+            profit_target=0.03, stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=50)
+        )
+
+        assert len(barriers) == 1
+        assert barriers.iloc[0]['label'] == 1
+        assert barriers.iloc[0]['barrier_touched'] == 'profit'
+
+    def test_triple_barrier_stop_loss(self):
+        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
+        prices = pd.Series(np.linspace(100, 95, 100), index=dates)
+        events = pd.DatetimeIndex([dates[0]])
+
+        barriers = get_events_triple_barrier(
+            close=prices, events=events,
+            profit_target=0.03, stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=50)
+        )
+
+        assert len(barriers) == 1
+        assert barriers.iloc[0]['label'] == -1
+        assert barriers.iloc[0]['barrier_touched'] == 'stop'
+
+    def test_triple_barrier_vertical(self):
+        dates = pd.date_range('2024-01-01', periods=50, freq='1h')
+        prices = pd.Series(100 + np.random.randn(50) * 0.1, index=dates)
+        events = pd.DatetimeIndex([dates[0]])
+
+        barriers = get_events_triple_barrier(
+            close=prices, events=events,
+            profit_target=0.10, stop_loss=-0.10,
+            vertical_barrier_timedelta=pd.Timedelta(hours=20)
+        )
+
+        assert len(barriers) == 1
+        assert barriers.iloc[0]['barrier_touched'] == 'vertical'
+        assert barriers.iloc[0]['label'] in [-1, 1]
+
+    def test_triple_barrier_multiple_events(self):
+        dates = pd.date_range('2024-01-01', periods=200, freq='1h')
+        prices = pd.Series(100 + np.cumsum(np.random.randn(200) * 0.5), index=dates)
+        events = pd.DatetimeIndex(dates[::20])
+
+        barriers = get_events_triple_barrier(
+            close=prices, events=events,
+            profit_target=0.02, stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=10)
+        )
+
+        assert len(barriers) >= len(events) * 0.8
+        assert barriers['label'].isin([-1, 1]).all()
+        assert barriers['barrier_touched'].isin(['profit', 'stop', 'vertical']).all()
+
+    def test_triple_barrier_with_side(self):
+        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
+        prices = pd.Series(np.linspace(100, 105, 100), index=dates)
+        events = pd.DatetimeIndex([dates[0], dates[50]])
+        side = pd.Series([1, -1], index=events)
+
+        barriers = get_events_triple_barrier(
+            close=prices, events=events,
+            profit_target=0.03, stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=30),
+            side=side
+        )
+
+        assert len(barriers) == 2
+        assert barriers.iloc[0]['label'] == 1
+        assert barriers.iloc[1]['label'] == -1
+
+    def test_bins_from_triple_barrier(self):
+        dates = pd.date_range('2024-01-01', periods=10, freq='1h')
+        prices = pd.Series([100, 102, 101, 103, 102, 104, 103, 105, 104, 106], index=dates)
+        events = pd.DatetimeIndex([dates[0], dates[2], dates[4]])
+
+        barriers = get_events_triple_barrier(
+            close=prices, events=events,
+            profit_target=0.02, stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=3)
+        )
+
+        bins = get_bins_from_triple_barrier(barriers, prices)
+
+        assert bins.isin([0, 1]).all()
+        assert len(bins) == len(barriers)
 
 
 class TestMetaLabeling:
     """Test Meta-Labeling."""
 
     def test_meta_labels_basic(self):
-        """Test basic meta-label generation."""
-        # Create events
         events = pd.DataFrame({
-            'target': [0.05, -0.03, 0.02, -0.01, 0.04],  # Actual returns
-            'side': [1, -1, 1, 1, -1],  # Predicted side (1=long, -1=short)
+            'target': [0.05, -0.03, 0.02, -0.01, 0.04],
+            'side': [1, -1, 1, 1, -1],
         })
-
         predictions = pd.Series([1, -1, 1, 1, -1], index=events.index)
-
         meta_labels = get_meta_labels(events, predictions)
 
-        # Meta-label should be 1 when side matches profitable direction
-        # events[0]: side=1 (long), target=0.05 (positive) -> meta=1
         assert meta_labels.iloc[0] == 1
-
-        # events[1]: side=-1 (short), target=-0.03 (negative) -> meta=1
         assert meta_labels.iloc[1] == 1
-
-        # events[2]: side=1 (long), target=0.02 (positive) -> meta=1
         assert meta_labels.iloc[2] == 1
-
-        # events[3]: side=1 (long), target=-0.01 (negative) -> meta=0
         assert meta_labels.iloc[3] == 0
-
-        # events[4]: side=-1 (short), target=0.04 (positive) -> meta=0
         assert meta_labels.iloc[4] == 0
 
     def test_meta_labels_all_correct(self):
-        """Test when all predictions are correct."""
-        events = pd.DataFrame({
-            'target': [0.05, -0.03, 0.02],
-            'side': [1, -1, 1],
-        })
-
+        events = pd.DataFrame({'target': [0.05, -0.03, 0.02], 'side': [1, -1, 1]})
         predictions = pd.Series([1, -1, 1], index=events.index)
-
         meta_labels = get_meta_labels(events, predictions)
 
-        # All should be 1 (take the trade)
         assert np.all(meta_labels == 1)
 
     def test_meta_labels_all_wrong(self):
-        """Test when all predictions are wrong."""
-        events = pd.DataFrame({
-            'target': [0.05, -0.03, 0.02],
-            'side': [-1, 1, -1],  # Opposite of actual
-        })
-
+        events = pd.DataFrame({'target': [0.05, -0.03, 0.02], 'side': [-1, 1, -1]})
         predictions = pd.Series([-1, 1, -1], index=events.index)
-
         meta_labels = get_meta_labels(events, predictions)
 
-        # All should be 0 (don't take the trade)
         assert np.all(meta_labels == 0)
 
 
@@ -419,187 +368,11 @@ class TestOptimalFracDiff:
     """Test optimal fractional differentiation order finding."""
 
     def test_optimal_d_for_stationary_series(self):
-        """Test that stationary series gets low d value."""
-        # Already stationary series (white noise)
         series = pd.Series(np.random.randn(200))
-
-        # Should find low d (close to 0)
         optimal_d = get_optimal_frac_diff_order(series, max_d=1.0, step=0.1)
-
-        # Should be low because series is already stationary
         assert optimal_d <= 0.3
 
     def test_optimal_d_for_nonstationary_series(self):
-        """Test that non-stationary series gets higher d value."""
-        # Non-stationary series (random walk)
         series = pd.Series(np.random.randn(200).cumsum())
-
-        # Should find higher d
         optimal_d = get_optimal_frac_diff_order(series, max_d=1.0, step=0.1)
-
-        # Should need significant differencing
         assert optimal_d >= 0.3
-
-
-class TestTripleBarrier:
-    """Test triple-barrier labeling."""
-
-    def test_triple_barrier_basic(self):
-        """Test basic triple-barrier labeling."""
-        # Create price series with clear profit/loss patterns
-        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
-        
-        # Price goes from 100 to 105 (5% gain)
-        prices = pd.Series(np.linspace(100, 105, 100), index=dates)
-        
-        # Create event at start
-        events = pd.DatetimeIndex([dates[0]])
-        
-        barriers = get_events_triple_barrier(
-            close=prices,
-            events=events,
-            profit_target=0.03,  # 3% profit
-            stop_loss=-0.02,     # 2% loss
-            vertical_barrier_timedelta=pd.Timedelta(hours=50)
-        )
-        
-        assert len(barriers) == 1
-        assert 't1' in barriers.columns
-        assert 'label' in barriers.columns
-        assert 'barrier_touched' in barriers.columns
-        
-        # Should hit profit target
-        assert barriers.iloc[0]['label'] == 1
-        assert barriers.iloc[0]['barrier_touched'] == 'profit'
-
-    def test_triple_barrier_stop_loss(self):
-        """Test that stop loss barrier works."""
-        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
-        
-        # Price drops from 100 to 95 (5% loss)
-        prices = pd.Series(np.linspace(100, 95, 100), index=dates)
-        
-        events = pd.DatetimeIndex([dates[0]])
-        
-        barriers = get_events_triple_barrier(
-            close=prices,
-            events=events,
-            profit_target=0.03,
-            stop_loss=-0.02,
-            vertical_barrier_timedelta=pd.Timedelta(hours=50)
-        )
-        
-        assert len(barriers) == 1
-        # Should hit stop loss
-        assert barriers.iloc[0]['label'] == -1
-        assert barriers.iloc[0]['barrier_touched'] == 'stop'
-
-    def test_triple_barrier_vertical(self):
-        """Test vertical barrier (timeout)."""
-        dates = pd.date_range('2024-01-01', periods=50, freq='1h')
-        
-        # Price moves slightly but doesn't hit barriers
-        prices = pd.Series(100 + np.random.randn(50) * 0.1, index=dates)
-        
-        events = pd.DatetimeIndex([dates[0]])
-        
-        barriers = get_events_triple_barrier(
-            close=prices,
-            events=events,
-            profit_target=0.10,  # 10% profit (won't hit)
-            stop_loss=-0.10,     # 10% loss (won't hit)
-            vertical_barrier_timedelta=pd.Timedelta(hours=20)
-        )
-        
-        assert len(barriers) == 1
-        # Should timeout at vertical barrier
-        assert barriers.iloc[0]['barrier_touched'] == 'vertical'
-        # Label should be sign of final return
-        assert barriers.iloc[0]['label'] in [-1, 1]
-
-    def test_triple_barrier_multiple_events(self):
-        """Test multiple events."""
-        dates = pd.date_range('2024-01-01', periods=200, freq='1h')
-        
-        # Create price series with multiple patterns
-        prices = pd.Series(
-            100 + np.cumsum(np.random.randn(200) * 0.5),
-            index=dates
-        )
-        
-        # Create events every 20 candles
-        events = pd.DatetimeIndex(dates[::20])
-        
-        barriers = get_events_triple_barrier(
-            close=prices,
-            events=events,
-            profit_target=0.02,
-            stop_loss=-0.02,
-            vertical_barrier_timedelta=pd.Timedelta(hours=10)
-        )
-        
-        # Should have barriers for most events
-        assert len(barriers) >= len(events) * 0.8  # At least 80%
-        
-        # All labels should be -1, 0, or 1
-        assert barriers['label'].isin([-1, 1]).all()
-        
-        # All should have touched a barrier
-        assert barriers['barrier_touched'].isin(['profit', 'stop', 'vertical']).all()
-
-    def test_triple_barrier_with_side(self):
-        """Test triple-barrier with position side (long/short)."""
-        dates = pd.date_range('2024-01-01', periods=100, freq='1h')
-        
-        # Price goes up
-        prices = pd.Series(np.linspace(100, 105, 100), index=dates)
-        
-        events = pd.DatetimeIndex([dates[0], dates[50]])
-        
-        # First event is long, second is short
-        side = pd.Series([1, -1], index=events)
-        
-        barriers = get_events_triple_barrier(
-            close=prices,
-            events=events,
-            profit_target=0.03,
-            stop_loss=-0.02,
-            vertical_barrier_timedelta=pd.Timedelta(hours=30),
-            side=side
-        )
-        
-        assert len(barriers) == 2
-        
-        # Long position should profit (price going up)
-        assert barriers.iloc[0]['label'] == 1
-        
-        # Short position should lose (price going up)
-        assert barriers.iloc[1]['label'] == -1
-
-    def test_bins_from_triple_barrier(self):
-        """Test conversion to binary bins."""
-        dates = pd.date_range('2024-01-01', periods=10, freq='1h')
-        prices = pd.Series([100, 102, 101, 103, 102, 104, 103, 105, 104, 106], index=dates)
-        
-        events = pd.DatetimeIndex([dates[0], dates[2], dates[4]])
-        
-        barriers = get_events_triple_barrier(
-            close=prices,
-            events=events,
-            profit_target=0.02,
-            stop_loss=-0.02,
-            vertical_barrier_timedelta=pd.Timedelta(hours=3)
-        )
-        
-        bins = get_bins_from_triple_barrier(barriers, prices)
-        
-        # Should be binary (0 or 1)
-        assert bins.isin([0, 1]).all()
-        
-        # Length should match events
-        assert len(bins) == len(barriers)
-        
-        # Profitable events (label=1) should have bin=1
-        profitable = barriers[barriers['label'] == 1].index
-        if len(profitable) > 0:
-            assert bins.loc[profitable].all() == 1
