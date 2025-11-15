@@ -376,3 +376,52 @@ class TestOptimalFracDiff:
         series = pd.Series(np.random.randn(200).cumsum())
         optimal_d = get_optimal_frac_diff_order(series, max_d=1.0, step=0.1)
         assert optimal_d >= 0.3
+
+
+class TestLopezDePradoEnsemble:
+    """Test Lopez de Prado ensemble wrapper."""
+
+    def test_ensemble_predict(self):
+        from freqtrade.freqai.prediction_models.LightGBMClassifierLopezDePrado import (
+            LopezDePradoEnsemble
+        )
+        from sklearn.ensemble import RandomForestClassifier
+
+        X_train = np.random.randn(100, 5)
+        y_train = np.random.randint(0, 2, 100)
+        X_test = np.random.randn(20, 5)
+
+        models = []
+        for _ in range(3):
+            model = RandomForestClassifier(n_estimators=10, random_state=42)
+            model.fit(X_train, y_train)
+            models.append(model)
+
+        ensemble = LopezDePradoEnsemble(models)
+        predictions = ensemble.predict(X_test)
+
+        assert len(predictions) == len(X_test)
+        assert np.all(np.isin(predictions, [0, 1]))
+
+    def test_ensemble_predict_proba(self):
+        from freqtrade.freqai.prediction_models.LightGBMClassifierLopezDePrado import (
+            LopezDePradoEnsemble
+        )
+        from sklearn.ensemble import RandomForestClassifier
+
+        X_train = np.random.randn(100, 5)
+        y_train = np.random.randint(0, 2, 100)
+        X_test = np.random.randn(20, 5)
+
+        models = []
+        for _ in range(3):
+            model = RandomForestClassifier(n_estimators=10, random_state=42)
+            model.fit(X_train, y_train)
+            models.append(model)
+
+        ensemble = LopezDePradoEnsemble(models)
+        probas = ensemble.predict_proba(X_test)
+
+        assert probas.shape == (len(X_test), 2)
+        assert np.allclose(probas.sum(axis=1), 1.0)
+        assert np.all(probas >= 0) and np.all(probas <= 1)

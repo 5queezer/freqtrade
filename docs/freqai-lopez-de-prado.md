@@ -57,6 +57,33 @@ Makes features stationary while preserving memory. Better than traditional retur
 
 Typical d values: 0.3-0.7. Lower = more memory preserved.
 
+## Prediction Model
+
+**LightGBMClassifierLopezDePrado** - Ensemble model using purged CV:
+
+```json
+{
+    "freqai": {
+        "model_training_parameters": {
+            "model_kwargs": {
+                "n_estimators": 100,
+                "learning_rate": 0.05,
+                "max_depth": 5
+            }
+        },
+        "feature_parameters": {
+            "use_purged_kfold_cv": true,
+            "purged_cv_n_splits": 5,
+            "purged_cv_embargo_pct": 0.01,
+            "ldp_time_decay": 1.0,
+            "label_horizon_candles": 20
+        }
+    }
+}
+```
+
+This model trains multiple LightGBM classifiers (one per fold) and ensembles predictions. More robust than single model training.
+
 ## Configuration Examples
 
 ### Minimal (Recommended Start)
