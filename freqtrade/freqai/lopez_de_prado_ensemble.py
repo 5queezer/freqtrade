@@ -5,7 +5,56 @@ These classes wrap multiple models trained on purged CV folds
 and average their predictions for more robust inference.
 """
 
+import logging
+
 import numpy as np
+
+from freqtrade.freqai.lopez_de_prado import PurgedKFold
+
+
+logger = logging.getLogger(__name__)
+
+
+class LopezDePradoMixin:
+    """
+    Mixin providing common configuration and utilities for Lopez de Prado models.
+    """
+
+    def _get_ldp_config(self):
+        """Extract Lopez de Prado configuration from freqai_info."""
+        feat_dict = self.freqai_info.get("feature_parameters", {})
+        return {
+            "use_purged_cv": feat_dict.get("use_purged_kfold_cv", False),
+            "n_splits": feat_dict.get("purged_cv_n_splits", 5),
+            "embargo_pct": feat_dict.get("purged_cv_embargo_pct", 0.01),
+            "label_horizon": feat_dict.get("label_horizon_candles", 0),
+        }
+
+    def _should_use_ensemble(self, config):
+        """Check if ensemble training should be used."""
+        return config["use_purged_cv"] and config["n_splits"] >= 3
+
+    def _get_purged_cv(self, dk, config):
+        """Create PurgedKFold cross-validator."""
+        close_times = None
+        if config["label_horizon"] > 0:
+            close_times = dk.train_dates + dk.train_dates.freq * config["label_horizon"]
+
+        return PurgedKFold(
+            n_splits=config["n_splits"],
+            samples_info_sets=close_times,
+            pct_embargo=config["embargo_pct"]
+        )
+
+    def _log_ensemble_complete(self, fold_scores, model_type="model"):
+        """Log ensemble training completion statistics."""
+        avg_score = np.mean(fold_scores)
+        std_score = np.std(fold_scores)
+        logger.info(
+            f"{model_type} ensemble complete: {len(fold_scores)} models, "
+            f"avg score = {avg_score:.4f} ± {std_score:.4f}"
+        )
+        return avg_score, std_score
 
 
 class LopezDePradoEnsemble:
