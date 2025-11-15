@@ -57,19 +57,22 @@ Makes features stationary while preserving memory. Better than traditional retur
 
 Typical d values: 0.3-0.7. Lower = more memory preserved.
 
-## Prediction Model
+## Prediction Models
 
-**LightGBMClassifierLopezDePrado** - Ensemble model using purged CV:
+Lopez de Prado compliant models are available for all major boosting frameworks. Each model trains an ensemble using Purged K-Fold CV for robust predictions.
+
+### LightGBM Models
+
+- **LightGBMClassifierLopezDePrado** - Classifier with ensemble training
 
 ```json
 {
     "freqai": {
+        "model": "LightGBMClassifierLopezDePrado",
         "model_training_parameters": {
-            "model_kwargs": {
-                "n_estimators": 100,
-                "learning_rate": 0.05,
-                "max_depth": 5
-            }
+            "n_estimators": 100,
+            "learning_rate": 0.05,
+            "max_depth": 5
         },
         "feature_parameters": {
             "use_purged_kfold_cv": true,
@@ -82,7 +85,24 @@ Typical d values: 0.3-0.7. Lower = more memory preserved.
 }
 ```
 
-This model trains multiple LightGBM classifiers (one per fold) and ensembles predictions. More robust than single model training.
+### CatBoost Models
+
+- **CatboostClassifierLopezDePrado** - Classifier with purged CV ensemble
+- **CatboostRegressorLopezDePrado** - Regressor with purged CV ensemble
+- **CatboostClassifierMultiTargetLopezDePrado** - Multi-target classifier
+- **CatboostRegressorMultiTargetLopezDePrado** - Multi-target regressor
+
+### XGBoost Models
+
+- **XGBoostClassifierLopezDePrado** - Classifier with purged CV ensemble
+- **XGBoostRegressorLopezDePrado** - Regressor with purged CV ensemble
+- **XGBoostRegressorMultiTargetLopezDePrado** - Multi-target regressor
+
+**How ensemble training works:**
+1. Splits data into N purged folds with embargo
+2. Trains one model per fold
+3. Averages predictions across all models
+4. More robust than single model (reduces overfitting)
 
 ## Configuration Examples
 
