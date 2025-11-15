@@ -63,7 +63,12 @@ Lopez de Prado compliant models are available for all major boosting frameworks.
 
 ### LightGBM Models
 
-- **LightGBMClassifierLopezDePrado** - Classifier with ensemble training
+- **LightGBMClassifierLopezDePrado** - Classifier with purged CV ensemble
+- **LightGBMRegressorLopezDePrado** - Regressor with purged CV ensemble
+- **LightGBMClassifierMultiTargetLopezDePrado** - Multi-target classifier
+- **LightGBMRegressorMultiTargetLopezDePrado** - Multi-target regressor
+
+**Example configuration:**
 
 ```json
 {

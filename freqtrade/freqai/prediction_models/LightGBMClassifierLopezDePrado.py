@@ -3,11 +3,11 @@ from typing import Any
 
 import numpy as np
 from lightgbm import LGBMClassifier
-from sklearn.base import clone
 
 from freqtrade.freqai.base_models.BaseClassifierModel import BaseClassifierModel
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.lopez_de_prado import PurgedKFold
+from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
 
 
 logger = logging.getLogger(__name__)
@@ -146,24 +146,3 @@ class LightGBMClassifierLopezDePrado(BaseClassifierModel):
             init_model=init_model,
         )
         return model
-
-
-class LopezDePradoEnsemble:
-    """
-    Ensemble of models trained on different purged folds.
-    Predictions are averaged across all models.
-    """
-
-    def __init__(self, models: list):
-        self.models = models
-        self.classes_ = models[0].classes_
-
-    def predict(self, X):
-        """Average predictions across ensemble."""
-        predictions = np.array([model.predict(X) for model in self.models])
-        return np.round(np.mean(predictions, axis=0)).astype(int)
-
-    def predict_proba(self, X):
-        """Average probability predictions across ensemble."""
-        probas = np.array([model.predict_proba(X) for model in self.models])
-        return np.mean(probas, axis=0)

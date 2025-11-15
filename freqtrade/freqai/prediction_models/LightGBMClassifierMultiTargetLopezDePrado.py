@@ -1,23 +1,25 @@
 import logging
-from pathlib import Path
 from typing import Any
 
 import numpy as np
-from catboost import CatBoostRegressor, Pool
+from lightgbm import LGBMClassifier
 
-from freqtrade.freqai.base_models.BaseRegressionModel import BaseRegressionModel
-from freqtrade.freqai.base_models.FreqaiMultiOutputRegressor import FreqaiMultiOutputRegressor
+from freqtrade.freqai.base_models.BaseClassifierModel import BaseClassifierModel
+from freqtrade.freqai.base_models.FreqaiMultiOutputClassifier import FreqaiMultiOutputClassifier
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.lopez_de_prado import PurgedKFold
-from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble, MultiTargetRegressorEnsembleWrapper
+from freqtrade.freqai.lopez_de_prado_ensemble import (
+    LopezDePradoEnsemble,
+    MultiTargetEnsembleWrapper,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-class CatboostRegressorMultiTargetLopezDePrado(BaseRegressionModel):
+class LightGBMClassifierMultiTargetLopezDePrado(BaseClassifierModel):
     """
-    Lopez de Prado compliant CatBoost multi-target regressor.
+    Lopez de Prado compliant LightGBM multi-target classifier.
 
     Trains separate models for each target label using purged K-Fold CV.
     Combines ensemble training with multi-target prediction.
@@ -34,11 +36,11 @@ class CatboostRegressorMultiTargetLopezDePrado(BaseRegressionModel):
         sample_weight = data_dictionary["train_weights"]
 
         if not use_purged_cv or n_splits < 3:
-            logger.info("Training multi-target CatBoost regressor (purged CV disabled or n_splits < 3)")
+            logger.info("Training multi-target LightGBM (purged CV disabled or n_splits < 3)")
             return self._train_multi_target_single(X, y, sample_weight, data_dictionary, dk)
 
         logger.info(
-            f"Training multi-target CatBoost regressor with Lopez de Prado: {n_splits} folds, "
+            f"Training multi-target LightGBM with Lopez de Prado: {n_splits} folds, "
             f"{y.shape[1]} targets"
         )
 
@@ -72,56 +74,44 @@ class CatboostRegressorMultiTargetLopezDePrado(BaseRegressionModel):
                 y_fold_val = y_single.iloc[val_idx]
                 weights_fold_val = sample_weight[val_idx]
 
-                train_pool = Pool(
-                    data=X_fold_train,
-                    label=y_fold_train,
-                    weight=weights_fold_train,
-                )
-                val_pool = Pool(
-                    data=X_fold_val,
-                    label=y_fold_val,
-                    weight=weights_fold_val,
+                model = LGBMClassifier(**self.model_training_parameters)
+                model.fit(
+                    X=X_fold_train,
+                    y=y_fold_train,
+                    sample_weight=weights_fold_train,
+                    eval_set=[(X_fold_val, y_fold_val)],
+                    eval_sample_weight=[weights_fold_val],
                 )
 
-                model = CatBoostRegressor(
-                    allow_writing_files=True,
-                    train_dir=Path(dk.data_path) / f"target_{target_idx}_fold_{fold_idx}",
-                    **self.model_training_parameters,
+                val_score = model.score(
+                    X_fold_val, y_fold_val, sample_weight=weights_fold_val
                 )
-                model.fit(X=train_pool, eval_set=val_pool)
-
-                val_score = model.score(val_pool)
                 fold_scores.append(val_score)
                 models.append(model)
 
             avg_score = np.mean(fold_scores)
-            logger.info(f"Target {target_idx + 1} ensemble: avg R² = {avg_score:.4f}")
+            logger.info(f"Target {target_idx + 1} ensemble: avg score = {avg_score:.4f}")
             target_ensembles.append(LopezDePradoEnsemble(models))
 
-        return MultiTargetRegressorEnsembleWrapper(target_ensembles)
+        return MultiTargetEnsembleWrapper(target_ensembles)
 
     def _train_multi_target_single(self, X, y, sample_weight, data_dictionary, dk):
         """Standard multi-target training without purged CV."""
-        cbr = CatBoostRegressor(
-            allow_writing_files=True,
-            train_dir=Path(dk.data_path),
-            **self.model_training_parameters,
-        )
+        lgb = LGBMClassifier(**self.model_training_parameters)
 
+        eval_weights = None
         eval_sets = [None] * y.shape[1]
 
         if self.freqai_info.get("data_split_parameters", {}).get("test_size", 0.1) != 0:
-            eval_sets = [None] * data_dictionary["test_labels"].shape[1]
-
+            eval_weights = [data_dictionary["test_weights"]]
+            eval_sets = [(None, None)] * data_dictionary["test_labels"].shape[1]  # type: ignore
             for i in range(data_dictionary["test_labels"].shape[1]):
-                eval_sets[i] = Pool(
-                    data=data_dictionary["test_features"],
-                    label=data_dictionary["test_labels"].iloc[:, i],
-                    weight=data_dictionary["test_weights"],
+                eval_sets[i] = (  # type: ignore
+                    data_dictionary["test_features"],
+                    data_dictionary["test_labels"].iloc[:, i],
                 )
 
         init_model = self.get_init_model(dk.pair)
-
         if init_model:
             init_models = init_model.estimators_
         else:
@@ -132,11 +122,12 @@ class CatboostRegressorMultiTargetLopezDePrado(BaseRegressionModel):
             fit_params.append(
                 {
                     "eval_set": eval_sets[i],
+                    "eval_sample_weight": eval_weights,
                     "init_model": init_models[i],
                 }
             )
 
-        model = FreqaiMultiOutputRegressor(estimator=cbr)
+        model = FreqaiMultiOutputClassifier(estimator=lgb)
         thread_training = self.freqai_info.get("multitarget_parallel_training", False)
         if thread_training:
             model.n_jobs = y.shape[1]

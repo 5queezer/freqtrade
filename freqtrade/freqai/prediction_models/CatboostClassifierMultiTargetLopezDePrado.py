@@ -9,6 +9,7 @@ from freqtrade.freqai.base_models.BaseClassifierModel import BaseClassifierModel
 from freqtrade.freqai.base_models.FreqaiMultiOutputClassifier import FreqaiMultiOutputClassifier
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.lopez_de_prado import PurgedKFold
+from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble, MultiTargetEnsembleWrapper
 
 
 logger = logging.getLogger(__name__)
@@ -96,10 +97,6 @@ class CatboostClassifierMultiTargetLopezDePrado(BaseClassifierModel):
 
             avg_score = np.mean(fold_scores)
             logger.info(f"Target {target_idx + 1} ensemble: avg score = {avg_score:.4f}")
-
-            from freqtrade.freqai.prediction_models.LightGBMClassifierLopezDePrado import (
-                LopezDePradoEnsemble
-            )
             target_ensembles.append(LopezDePradoEnsemble(models))
 
         return MultiTargetEnsembleWrapper(target_ensembles)

@@ -8,6 +8,7 @@ from catboost import CatBoostClassifier, Pool
 from freqtrade.freqai.base_models.BaseClassifierModel import BaseClassifierModel
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.lopez_de_prado import PurgedKFold
+from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
 
 
 logger = logging.getLogger(__name__)
@@ -108,9 +109,6 @@ class CatboostClassifierLopezDePrado(BaseClassifierModel):
             f"avg score = {avg_score:.4f} ± {std_score:.4f}"
         )
 
-        from freqtrade.freqai.prediction_models.LightGBMClassifierLopezDePrado import (
-            LopezDePradoEnsemble
-        )
         return LopezDePradoEnsemble(models)
 
     def _train_single_model(self, X, y, sample_weights, data_dictionary, dk):

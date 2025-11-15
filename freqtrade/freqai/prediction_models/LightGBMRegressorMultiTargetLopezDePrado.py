@@ -2,21 +2,24 @@ import logging
 from typing import Any
 
 import numpy as np
-from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
 
 from freqtrade.freqai.base_models.BaseRegressionModel import BaseRegressionModel
+from freqtrade.freqai.base_models.FreqaiMultiOutputRegressor import FreqaiMultiOutputRegressor
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.lopez_de_prado import PurgedKFold
-from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble, MultiTargetRegressorEnsembleWrapper
-from freqtrade.freqai.tensorboard import TBCallback
+from freqtrade.freqai.lopez_de_prado_ensemble import (
+    LopezDePradoEnsemble,
+    MultiTargetRegressorEnsembleWrapper,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-class XGBoostRegressorMultiTargetLopezDePrado(BaseRegressionModel):
+class LightGBMRegressorMultiTargetLopezDePrado(BaseRegressionModel):
     """
-    Lopez de Prado compliant XGBoost multi-target regressor.
+    Lopez de Prado compliant LightGBM multi-target regressor.
 
     Trains separate models for each target label using purged K-Fold CV.
     Combines ensemble training with multi-target prediction.
@@ -33,11 +36,11 @@ class XGBoostRegressorMultiTargetLopezDePrado(BaseRegressionModel):
         sample_weight = data_dictionary["train_weights"]
 
         if not use_purged_cv or n_splits < 3:
-            logger.info("Training XGBoost multi-target regressor (purged CV disabled or n_splits < 3)")
-            return self._train_single_model(X, y, sample_weight, data_dictionary, dk)
+            logger.info("Training multi-target LightGBM regressor (purged CV disabled or n_splits < 3)")
+            return self._train_multi_target_single(X, y, sample_weight, data_dictionary, dk)
 
         logger.info(
-            f"Training multi-target XGBoost regressor with Lopez de Prado: {n_splits} folds, "
+            f"Training multi-target LightGBM regressor with Lopez de Prado: {n_splits} folds, "
             f"{y.shape[1]} targets"
         )
 
@@ -71,16 +74,14 @@ class XGBoostRegressorMultiTargetLopezDePrado(BaseRegressionModel):
                 y_fold_val = y_single.iloc[val_idx]
                 weights_fold_val = sample_weight[val_idx]
 
-                model = XGBRegressor(**self.model_training_parameters)
-                model.set_params(callbacks=[TBCallback(dk.data_path)])
+                model = LGBMRegressor(**self.model_training_parameters)
                 model.fit(
                     X=X_fold_train,
                     y=y_fold_train,
                     sample_weight=weights_fold_train,
                     eval_set=[(X_fold_val, y_fold_val)],
-                    sample_weight_eval_set=[weights_fold_val],
+                    eval_sample_weight=[weights_fold_val],
                 )
-                model.set_params(callbacks=[])
 
                 val_score = model.score(X_fold_val, y_fold_val, sample_weight=weights_fold_val)
                 fold_scores.append(val_score)
@@ -92,27 +93,44 @@ class XGBoostRegressorMultiTargetLopezDePrado(BaseRegressionModel):
 
         return MultiTargetRegressorEnsembleWrapper(target_ensembles)
 
-    def _train_single_model(self, X, y, sample_weight, data_dictionary, dk):
+    def _train_multi_target_single(self, X, y, sample_weight, data_dictionary, dk):
         """Standard multi-target training without purged CV."""
-        if self.freqai_info.get("data_split_parameters", {}).get("test_size", 0.1) == 0:
-            eval_set = None
-            eval_weights = None
+        lgb = LGBMRegressor(**self.model_training_parameters)
+
+        eval_weights = None
+        eval_sets = [None] * y.shape[1]
+
+        if self.freqai_info.get("data_split_parameters", {}).get("test_size", 0.1) != 0:
+            eval_weights = [data_dictionary["test_weights"]]
+            eval_sets = [(None, None)] * data_dictionary["test_labels"].shape[1]  # type: ignore
+            for i in range(data_dictionary["test_labels"].shape[1]):
+                eval_sets[i] = [  # type: ignore
+                    (
+                        data_dictionary["test_features"],
+                        data_dictionary["test_labels"].iloc[:, i],
+                    )
+                ]
+
+        init_model = self.get_init_model(dk.pair)
+        if init_model:
+            init_models = init_model.estimators_
         else:
-            eval_set = [(data_dictionary["test_features"], data_dictionary["test_labels"]), (X, y)]
-            eval_weights = [data_dictionary["test_weights"], sample_weight]
+            init_models = [None] * y.shape[1]
 
-        xgb_model = self.get_init_model(dk.pair)
+        fit_params = []
+        for i in range(len(eval_sets)):
+            fit_params.append(
+                {
+                    "eval_set": eval_sets[i],
+                    "eval_sample_weight": eval_weights,
+                    "init_model": init_models[i],
+                }
+            )
 
-        model = XGBRegressor(**self.model_training_parameters)
-        model.set_params(callbacks=[TBCallback(dk.data_path)])
-        model.fit(
-            X=X,
-            y=y,
-            sample_weight=sample_weight,
-            eval_set=eval_set,
-            sample_weight_eval_set=eval_weights,
-            xgb_model=xgb_model,
-        )
-        model.set_params(callbacks=[])
+        model = FreqaiMultiOutputRegressor(estimator=lgb)
+        thread_training = self.freqai_info.get("multitarget_parallel_training", False)
+        if thread_training:
+            model.n_jobs = y.shape[1]
+        model.fit(X=X, y=y, sample_weight=sample_weight, fit_params=fit_params)
 
         return model
