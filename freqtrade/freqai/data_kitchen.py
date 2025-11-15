@@ -977,7 +977,8 @@ class FreqaiDataKitchen:
         compact for Frequi purposes.
         """
         to_keep = [
-            col for col in dataframe.columns if not col.startswith("%") or col.startswith("%%")
+            col for col in dataframe.columns
+            if not isinstance(col, str) or not col.startswith("%") or col.startswith("%%")
         ]
         return dataframe[to_keep]
 
