@@ -521,7 +521,8 @@ class FreqaiDataKitchen:
                 append_dict[f"{label}_mean"] = self.data["labels_mean"][label]
             if "labels_std" in self.data and label in self.data["labels_std"]:
                 append_dict[f"{label}_std"] = self.data["labels_std"][label]
-
+                           if "labels_std" in self.data and label in self.data["labels_std"]:
+               
         for extra_col in self.data["extra_returns_per_train"]:
             append_dict[f"{extra_col}"] = self.data["extra_returns_per_train"][extra_col]
 
