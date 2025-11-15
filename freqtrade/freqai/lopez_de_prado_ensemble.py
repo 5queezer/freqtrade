@@ -8,6 +8,7 @@ and average their predictions for more robust inference.
 import logging
 
 import numpy as np
+import pandas as pd
 
 from freqtrade.freqai.lopez_de_prado import PurgedKFold
 
@@ -38,7 +39,14 @@ class LopezDePradoMixin:
         """Create PurgedKFold cross-validator."""
         close_times = None
         if config["label_horizon"] > 0:
-            close_times = dk.train_dates + dk.train_dates.freq * config["label_horizon"]
+            # dk.train_dates is a Series, not a DatetimeIndex, so infer frequency
+            train_dates = dk.train_dates
+            if len(train_dates) >= 2:
+                # Infer frequency from the data
+                freq = pd.to_timedelta(train_dates.diff().median())
+                close_times = train_dates + freq * config["label_horizon"]
+            else:
+                close_times = train_dates
 
         return PurgedKFold(
             n_splits=config["n_splits"],
