@@ -23,6 +23,7 @@ Features include:
 * **Cleaning of incoming data** - Handle NaNs safely before training and model inferencing
 * **Dimensionality reduction** - Reduce the size of the training data via [Principal Component Analysis](freqai-feature-engineering.md#data-dimensionality-reduction-with-principal-component-analysis)
 * **Deploying bot fleets** - Set one bot to train models while a fleet of [consumers](producer-consumer.md) use signals.
+* **Lopez de Prado methods** - Implements scientifically rigorous ML methods including [Purged K-Fold CV, fractional differentiation, and sample weighting](freqai-lopez-de-prado.md)
 
 ## Quick start
 
