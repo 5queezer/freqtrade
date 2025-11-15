@@ -587,12 +587,24 @@ class FreqaiDataDrawer:
             dk.data = self.meta_data_dictionary[coin][METADATA]
             dk.feature_pipeline = self.meta_data_dictionary[coin][FEATURE_PIPELINE]
             dk.label_pipeline = self.meta_data_dictionary[coin][LABEL_PIPELINE]
+            # Ensure backward compatibility with datasieve Pipeline
+            if not hasattr(dk.feature_pipeline, "features_in"):
+                if hasattr(dk.feature_pipeline, "feature_list"):
+                    dk.feature_pipeline.features_in = dk.feature_pipeline.feature_list
+                else:
+                    dk.feature_pipeline.features_in = None
         else:
             with (dk.data_path / f"{dk.model_filename}_{METADATA}.json").open("r") as fp:
                 dk.data = rapidjson.load(fp, number_mode=METADATA_NUMBER_MODE)
 
             with (dk.data_path / f"{dk.model_filename}_{FEATURE_PIPELINE}.pkl").open("rb") as fp:
                 dk.feature_pipeline = cloudpickle.load(fp)
+            # Ensure backward compatibility with datasieve Pipeline
+            if not hasattr(dk.feature_pipeline, "features_in"):
+                if hasattr(dk.feature_pipeline, "feature_list"):
+                    dk.feature_pipeline.features_in = dk.feature_pipeline.feature_list
+                else:
+                    dk.feature_pipeline.features_in = None
             with (dk.data_path / f"{dk.model_filename}_{LABEL_PIPELINE}.pkl").open("rb") as fp:
                 dk.label_pipeline = cloudpickle.load(fp)
 

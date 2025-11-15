@@ -114,6 +114,16 @@ def plot_feature_importance(
 
     for label in models:
         mdl = models[label]
+        # Handle Lopez de Prado ensemble models
+        if "LopezDePradoEnsemble" in str(mdl.__class__):
+            if hasattr(mdl, "models") and len(mdl.models) > 0:
+                # Use the first model in the ensemble for feature importance
+                mdl = mdl.models[0]
+                logger.info("Using first model from LopezDePradoEnsemble for feature importance.")
+            else:
+                logger.info("LopezDePradoEnsemble has no models.")
+                return
+
         if "catboost.core" in str(mdl.__class__):
             # CatBoost is no longer actively supported since 2025.12
             # However users can still use it in their custom models
