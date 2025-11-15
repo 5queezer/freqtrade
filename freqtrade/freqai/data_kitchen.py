@@ -20,6 +20,7 @@ from freqtrade.constants import DOCS_LINK, ORDERFLOW_ADDED_COLUMNS, Config
 from freqtrade.data.converter import reduce_dataframe_footprint
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import timeframe_to_seconds
+from freqtrade.freqai import lopez_de_prado as ldp
 from freqtrade.strategy import merge_informative_pair
 from freqtrade.strategy.interface import IStrategy
 
@@ -130,6 +131,10 @@ class FreqaiDataKitchen:
         Given the dataframe for the full history for training, split the data into
         training and test data according to user specified parameters in configuration
         file.
+
+        Now supports Lopez de Prado's Purged K-Fold Cross-Validation for proper
+        time-series validation with embargo periods to prevent look-ahead bias.
+
         :param filtered_dataframe: cleaned dataframe ready to be split.
         :param labels: cleaned labels ready to be split.
         """
@@ -139,12 +144,18 @@ class FreqaiDataKitchen:
             self.freqai_config["data_split_parameters"].update({"shuffle": False})
 
         weights: npt.ArrayLike
-        if feat_dict.get("weight_factor", 0) > 0:
-            weights = self.set_weights_higher_recent(len(filtered_dataframe))
-        else:
-            weights = np.ones(len(filtered_dataframe))
+        weights = self.calculate_sample_weights(filtered_dataframe, labels)
 
-        if self.freqai_config.get("data_split_parameters", {}).get("test_size", 0.1) != 0:
+        # Check if using Lopez de Prado's Purged K-Fold CV
+        use_purged_cv = feat_dict.get("use_purged_kfold_cv", False)
+
+        if use_purged_cv:
+            # Use Purged K-Fold Cross-Validation (Lopez de Prado method)
+            train_features, test_features, train_labels, test_labels, train_weights, test_weights = (
+                self._split_with_purged_kfold(filtered_dataframe, labels, weights)
+            )
+        elif self.freqai_config.get("data_split_parameters", {}).get("test_size", 0.1) != 0:
+            # Standard train_test_split (original method)
             (
                 train_features,
                 test_features,
@@ -408,14 +419,157 @@ class FreqaiDataKitchen:
         labels = [c for c in column_names if "&" in c]
         self.label_list = labels
 
+    def calculate_sample_weights(
+        self, dataframe: DataFrame, labels: DataFrame
+    ) -> npt.ArrayLike:
+        """
+        Calculate sample weights using Lopez de Prado methods or traditional exponential decay.
+
+        Supports:
+        - Traditional exponential time decay (weight_factor > 0)
+        - Lopez de Prado time decay (ldp_time_decay > 0)
+        - Lopez de Prado sample uniqueness (ldp_sample_uniqueness = True)
+        - Return-based weighting (ldp_return_weighting = True)
+
+        :param dataframe: Features dataframe with DatetimeIndex
+        :param labels: Labels dataframe
+        :return: Array of sample weights
+        """
+        feat_dict = self.freqai_config["feature_parameters"]
+        num_samples = len(dataframe)
+
+        # Start with uniform weights
+        weights = np.ones(num_samples)
+
+        # Traditional exponential decay (backward compatibility)
+        if feat_dict.get("weight_factor", 0) > 0:
+            weights = self.set_weights_higher_recent(num_samples)
+
+        # Lopez de Prado time decay
+        if feat_dict.get("ldp_time_decay", 0) > 0:
+            if isinstance(dataframe.index, pd.DatetimeIndex):
+                decay_factor = feat_dict.get("ldp_time_decay", 1.0)
+                weights = ldp.get_sample_weights_by_time_decay(
+                    dataframe.index.to_series(), decay_factor=decay_factor
+                )
+            else:
+                logger.warning(
+                    "ldp_time_decay requires DatetimeIndex. Falling back to uniform weights."
+                )
+
+        # Lopez de Prado sample uniqueness weighting
+        if feat_dict.get("ldp_sample_uniqueness", False):
+            if isinstance(dataframe.index, pd.DatetimeIndex):
+                # Calculate label close times
+                # Assuming labels have a 'horizon' or we use a default
+                horizon_candles = feat_dict.get("label_horizon_candles", 10)
+                close_times = pd.Series(
+                    dataframe.index + pd.Timedelta(hours=horizon_candles),
+                    index=dataframe.index
+                )
+                uniqueness_weights = ldp.get_sample_weights_by_uniqueness(close_times)
+                # Combine with existing weights (element-wise multiplication)
+                weights = weights * uniqueness_weights.values
+                weights = weights / weights.sum()  # Renormalize
+            else:
+                logger.warning(
+                    "ldp_sample_uniqueness requires DatetimeIndex. Skipping."
+                )
+
+        # Return-based weighting
+        if feat_dict.get("ldp_return_weighting", False):
+            # Check if we have return data in labels
+            if len(labels.columns) > 0 and isinstance(labels, pd.DataFrame):
+                # Use first label column as returns proxy
+                returns = labels.iloc[:, 0]
+                if not returns.isna().all():
+                    span = feat_dict.get("ldp_return_weight_span", 60)
+                    return_weights = ldp.get_sample_weights_by_returns(returns, span=span)
+                    weights = weights * return_weights
+                    weights = weights / weights.sum()
+
+        return weights
+
     def set_weights_higher_recent(self, num_weights: int) -> npt.ArrayLike:
         """
         Set weights so that recent data is more heavily weighted during
         training than older data.
+
+        Traditional exponential decay method (kept for backward compatibility).
+        Consider using ldp_time_decay for Lopez de Prado compliant weighting.
         """
         wfactor = self.config["freqai"]["feature_parameters"]["weight_factor"]
         weights = np.exp(-np.arange(num_weights) / (wfactor * num_weights))[::-1]
         return weights
+
+    def _split_with_purged_kfold(
+        self, dataframe: DataFrame, labels: DataFrame, weights: npt.ArrayLike
+    ) -> tuple[DataFrame, DataFrame, DataFrame, DataFrame, npt.ArrayLike, npt.ArrayLike]:
+        """
+        Split data using Lopez de Prado's Purged K-Fold Cross-Validation.
+
+        This method:
+        1. Uses time-aware fold splitting
+        2. Purges training samples that overlap with test samples
+        3. Adds embargo period to prevent look-ahead bias
+
+        :param dataframe: Features dataframe
+        :param labels: Labels dataframe
+        :param weights: Sample weights
+        :return: Tuple of (train_features, test_features, train_labels, test_labels,
+                          train_weights, test_weights)
+        """
+        feat_dict = self.freqai_config["feature_parameters"]
+
+        n_splits = feat_dict.get("purged_cv_n_splits", 5)
+        pct_embargo = feat_dict.get("purged_cv_embargo_pct", 0.01)
+
+        # Prepare samples_info_sets for purging
+        samples_info_sets = None
+        if feat_dict.get("purged_cv_enable_purging", True):
+            # Use dataframe index as sample timestamps
+            if isinstance(dataframe.index, pd.DatetimeIndex):
+                # For purging, we need to know when each sample's label "ends"
+                # Assume labels have a horizon
+                horizon_candles = feat_dict.get("label_horizon_candles", 10)
+                # Convert candles to time based on timeframe
+                timeframe = self.config.get("timeframe", "5m")
+                horizon_seconds = horizon_candles * timeframe_to_seconds(timeframe)
+
+                samples_info_sets = pd.Series(
+                    dataframe.index + pd.Timedelta(seconds=horizon_seconds),
+                    index=dataframe.index
+                )
+            else:
+                logger.warning(
+                    "Purging requires DatetimeIndex. Purging will be disabled."
+                )
+
+        # Create PurgedKFold cross-validator
+        cv = ldp.PurgedKFold(
+            n_splits=n_splits,
+            samples_info_sets=samples_info_sets,
+            pct_embargo=pct_embargo
+        )
+
+        # Use the first fold for train/test split
+        # (In production, you might want to iterate through all folds)
+        train_idx, test_idx = next(cv.split(dataframe))
+
+        # Split data
+        train_features = dataframe.iloc[train_idx]
+        test_features = dataframe.iloc[test_idx]
+        train_labels = labels.iloc[train_idx]
+        test_labels = labels.iloc[test_idx]
+        train_weights = weights[train_idx]
+        test_weights = weights[test_idx]
+
+        logger.info(
+            f"Purged K-Fold split: train_size={len(train_idx)}, "
+            f"test_size={len(test_idx)}, embargo={pct_embargo*100:.1f}%"
+        )
+
+        return train_features, test_features, train_labels, test_labels, train_weights, test_weights
 
     def get_predictions_to_append(
         self, predictions: DataFrame, do_predict: npt.ArrayLike, dataframe_backtest: DataFrame

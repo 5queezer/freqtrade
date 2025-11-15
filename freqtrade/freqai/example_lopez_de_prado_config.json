@@ -1,0 +1,87 @@
+{
+  "freqai": {
+    "enabled": true,
+    "purge_old_models": 2,
+    "train_period_days": 30,
+    "backtest_period_days": 7,
+    "identifier": "lopez_de_prado_example",
+    "feature_parameters": {
+      "comment": "=== LOPEZ DE PRADO COMPLIANCE CONFIGURATION ===",
+
+      "comment_cv": "Cross-Validation Settings",
+      "use_purged_kfold_cv": true,
+      "purged_cv_n_splits": 5,
+      "purged_cv_embargo_pct": 0.01,
+      "purged_cv_enable_purging": true,
+      "label_horizon_candles": 10,
+
+      "comment_weights": "Sample Weighting Settings",
+      "ldp_time_decay": 1.0,
+      "ldp_sample_uniqueness": true,
+      "ldp_return_weighting": false,
+      "ldp_return_weight_span": 60,
+
+      "comment_fracdiff": "Fractional Differentiation Settings",
+      "ldp_fractional_differentiation": true,
+      "ldp_frac_diff_order": 0.5,
+      "ldp_frac_diff_threshold": 0.01,
+      "ldp_frac_diff_columns": null,
+
+      "comment_features": "Standard Feature Engineering",
+      "include_timeframes": ["5m", "15m", "1h"],
+      "include_shifted_candles": 2,
+      "include_corr_pairlist": [],
+      "indicator_periods_candles": [10, 20, 50],
+
+      "comment_preprocessing": "Preprocessing Pipeline",
+      "DI_threshold": 0,
+      "use_SVM_to_remove_outliers": false,
+      "use_DBSCAN_to_remove_outliers": false,
+      "principal_component_analysis": false,
+      "noise_standard_deviation": 0,
+
+      "comment_legacy": "Legacy Settings (for backward compatibility)",
+      "weight_factor": 0,
+      "shuffle_after_split": false,
+      "reverse_train_test_order": false
+    },
+    "data_split_parameters": {
+      "test_size": 0.1,
+      "shuffle": false,
+      "random_state": 42
+    }
+  },
+
+  "comment_explanation": {
+    "purged_cv": "Prevents look-ahead bias by purging overlapping samples and adding embargo periods",
+    "sample_uniqueness": "Weights samples by uniqueness (inverse of overlap with other samples)",
+    "fractional_differentiation": "Makes features stationary while preserving memory (0 < d < 1)",
+    "time_decay": "Recent samples get higher weights (exponential decay)",
+    "label_horizon_candles": "How many candles forward your labels look (used for purging)",
+    "embargo_pct": "Buffer period after test set (1-5% typical, prevents leakage)"
+  },
+
+  "comment_quick_presets": {
+    "conservative": {
+      "use_purged_kfold_cv": true,
+      "purged_cv_embargo_pct": 0.02,
+      "ldp_time_decay": 0.5
+    },
+    "research_grade": {
+      "use_purged_kfold_cv": true,
+      "purged_cv_n_splits": 10,
+      "purged_cv_embargo_pct": 0.05,
+      "ldp_time_decay": 1.0,
+      "ldp_sample_uniqueness": true,
+      "ldp_fractional_differentiation": true
+    },
+    "high_frequency": {
+      "use_purged_kfold_cv": true,
+      "purged_cv_embargo_pct": 0.005,
+      "label_horizon_candles": 5,
+      "ldp_time_decay": 1.5,
+      "ldp_fractional_differentiation": true,
+      "ldp_frac_diff_order": 0.4
+    }
+  }
+}

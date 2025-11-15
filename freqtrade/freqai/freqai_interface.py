@@ -25,6 +25,7 @@ from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import timeframe_to_seconds
 from freqtrade.freqai.data_drawer import FreqaiDataDrawer
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
+from freqtrade.freqai.lopez_de_prado_transforms import FractionalDifferentiator
 from freqtrade.freqai.utils import get_tb_logger, plot_feature_importance, record_params
 from freqtrade.strategy.interface import IStrategy
 
@@ -530,11 +531,43 @@ class IFreqaiModel(ABC):
             )
 
     def define_data_pipeline(self, threads=-1) -> Pipeline:
+        """
+        Define the data preprocessing pipeline.
+
+        Now includes Lopez de Prado's Fractional Differentiation for
+        making features stationary while preserving memory.
+        """
         ft_params = self.freqai_info["feature_parameters"]
-        pipe_steps = [
+
+        # Initial steps
+        pipe_steps = []
+
+        # Lopez de Prado: Fractional Differentiation (applied BEFORE scaling)
+        # This makes features stationary while preserving information
+        if ft_params.get("ldp_fractional_differentiation", False):
+            frac_d = ft_params.get("ldp_frac_diff_order", 0.5)
+            frac_threshold = ft_params.get("ldp_frac_diff_threshold", 0.01)
+            frac_columns = ft_params.get("ldp_frac_diff_columns", None)
+
+            logger.info(
+                f"Adding Fractional Differentiation to pipeline: d={frac_d}, "
+                f"threshold={frac_threshold}"
+            )
+
+            pipe_steps.append((
+                "frac_diff",
+                SKLearnWrapper(FractionalDifferentiator(
+                    d=frac_d,
+                    threshold=frac_threshold,
+                    columns=frac_columns
+                ))
+            ))
+
+        # Standard preprocessing
+        pipe_steps.extend([
             ("const", ds.VarianceThreshold(threshold=0)),
             ("scaler", SKLearnWrapper(MinMaxScaler(feature_range=(-1, 1)))),
-        ]
+        ])
 
         if ft_params.get("principal_component_analysis", False):
             pipe_steps.append(("pca", ds.PCA(n_components=0.999)))
