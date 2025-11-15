@@ -1,9 +1,7 @@
 import logging
 from typing import Any
 
-import numpy as np
 import pandas as pd
-from pandas import DataFrame
 from pandas.api.types import is_integer_dtype
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
@@ -77,30 +75,3 @@ class XGBoostClassifierLopezDePrado(BaseClassifierModel, LopezDePradoMixin):
             xgb_model=self.get_init_model(dk.pair)
         )
         return model
-
-    def predict(self, unfiltered_df: DataFrame, dk: FreqaiDataKitchen, **kwargs) -> tuple[DataFrame, np.ndarray]:
-        (pred_df, dk.do_predict) = super().predict(unfiltered_df, dk, **kwargs)
-        le = LabelEncoder()
-        label = dk.label_list[0]
-        labels_before = list(dk.data["labels_std"].keys())
-        labels_after = le.fit_transform(labels_before).tolist()
-
-        # Clip predictions to valid label range to handle edge cases
-        # where ensemble averaging produces out-of-range indices
-        max_valid_idx = len(labels_before) - 1
-        original_preds = pred_df[label].copy()
-        pred_df[label] = pred_df[label].clip(0, max_valid_idx).astype(int)
-
-        # Log warning if any predictions were clipped (indicates data quality issue)
-        n_clipped = (original_preds != pred_df[label]).sum()
-        if n_clipped > 0:
-            logger.warning(
-                f"{n_clipped} predictions were clipped to valid range [0, {max_valid_idx}]. "
-                f"This may indicate class imbalance in training data."
-            )
-
-        pred_df[label] = le.inverse_transform(pred_df[label])
-        pred_df = pred_df.rename(
-            columns={labels_after[i]: labels_before[i] for i in range(len(labels_before))}
-        )
-        return (pred_df, dk.do_predict)
