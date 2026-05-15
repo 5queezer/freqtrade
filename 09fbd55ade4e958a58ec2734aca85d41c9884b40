@@ -1,0 +1,11 @@
+problem: Fix pushed HEAD IndentationError in freqai data kitchen
+approach: Verified worktree diff was only the two-line syntax cleanup, compiled data_kitchen.py and FreqaiExampleLopezDePradoStrategy.py, then committed the cleanup
+failed_paths:
+  - None
+verification:
+  - git diff --stat && git diff --check
+  - python -m py_compile freqtrade/freqai/data_kitchen.py freqtrade/templates/FreqaiExampleLopezDePradoStrategy.py
+workflow_learning: For pushed syntax regressions, first confirm the diff scope before compiling the directly affected module and one dependent strategy entrypoint
+related_files:
+  - freqtrade/freqai/data_kitchen.py
+  - freqtrade/templates/FreqaiExampleLopezDePradoStrategy.py
