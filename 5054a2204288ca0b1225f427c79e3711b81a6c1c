@@ -1,0 +1,16 @@
+problem: Preserve chronological alignment and valid aggregation for Lopez de Prado purged CV workflows
+approach: Aligned train_dates to train_features, disabled shuffle_after_split under purged CV, used final purged fold as holdout, fixed overlap purging and ensemble/classifier aggregation, added regression tests/docs
+failed_paths:
+  - pytest -q tests/freqai/test_lopez_de_prado.py blocked locally: ModuleNotFoundError: xdist
+  - poetry run pytest blocked locally: Poetry configuration invalid in this checkout
+verification:
+  - Reviewed git diff for freqai/data_kitchen.py, lopez_de_prado.py, lopez_de_prado_ensemble.py, docs, tests
+  - Attempted targeted pytest and project-managed pytest; both blocked by local environment/tooling
+rebase: No rebase performed in this step; branch push used force-with-lease only if non-fast-forward was required
+related_files:
+  - freqtrade/freqai/data_kitchen.py
+  - freqtrade/freqai/lopez_de_prado.py
+  - freqtrade/freqai/lopez_de_prado_ensemble.py
+  - freqtrade/freqai/prediction_models/XGBoostClassifierLopezDePrado.py
+  - tests/freqai/test_lopez_de_prado.py
+  - docs/freqai-lopez-de-prado.md
