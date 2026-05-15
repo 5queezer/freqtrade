@@ -164,7 +164,12 @@ class FreqaiDataKitchen:
             train_labels = labels
             train_weights = weights
 
-        if feat_dict["shuffle_after_split"]:
+        if feat_dict["shuffle_after_split"] and use_purged_cv:
+            logger.warning(
+                "Ignoring shuffle_after_split because Purged K-Fold CV requires "
+                "chronologically ordered, timestamp-aligned training rows."
+            )
+        elif feat_dict["shuffle_after_split"]:
             rint1 = random.randint(0, 100)
             rint2 = random.randint(0, 100)
             train_features = train_features.sample(frac=1, random_state=rint1).reset_index(
@@ -301,6 +306,10 @@ class FreqaiDataKitchen:
         train_weights: Any,
         test_weights: Any,
     ) -> dict:
+        train_dates = self.train_dates
+        if len(train_dates) > 0:
+            train_dates = pd.Series(train_dates).loc[train_df.index]
+
         self.data_dictionary = {
             "train_features": train_df,
             "test_features": test_df,
@@ -308,7 +317,7 @@ class FreqaiDataKitchen:
             "test_labels": test_labels,
             "train_weights": train_weights,
             "test_weights": test_weights,
-            "train_dates": self.train_dates,
+            "train_dates": train_dates,
         }
 
         return self.data_dictionary
@@ -485,7 +494,9 @@ class FreqaiDataKitchen:
             pct_embargo=pct_embargo
         )
 
-        train_idx, test_idx = next(cv.split(dataframe))
+        # Use the final fold as validation so training data remains chronologically
+        # before the holdout fold while still applying purge/embargo rules.
+        train_idx, test_idx = list(cv.split(dataframe))[-1]
 
         train_features = dataframe.iloc[train_idx]
         test_features = dataframe.iloc[test_idx]

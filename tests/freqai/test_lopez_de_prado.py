@@ -70,6 +70,21 @@ class TestPurgedKFold:
             ]
             assert len(overlapping_train) == 0 or len(overlapping_train) < len(test_idx) * 0.1
 
+    def test_purging_removes_train_labels_overlapping_test_start(self):
+        dates = pd.date_range('2020-01-01', periods=30, freq='D')
+        X = pd.DataFrame({'feat': np.arange(30)}, index=dates)
+        close_times = pd.Series([date + timedelta(days=15) for date in dates], index=dates)
+        cv = PurgedKFold(n_splits=3, samples_info_sets=close_times, pct_embargo=0.0)
+
+        for train_idx, test_idx in cv.split(X):
+            test_start = close_times.index[test_idx].min()
+            test_end = close_times.iloc[test_idx].max()
+            train_starts = close_times.index[train_idx]
+            train_ends = close_times.iloc[train_idx]
+
+            overlaps = (train_starts <= test_end) & (train_ends >= test_start)
+            assert not overlaps.any()
+
     def test_get_n_splits(self):
         cv = PurgedKFold(n_splits=7)
         assert cv.get_n_splits() == 7
@@ -378,6 +393,71 @@ class TestOptimalFracDiff:
         assert optimal_d >= 0.3
 
 
+
+
+class _ConstantRegressor:
+    def __init__(self, value):
+        self.value = value
+
+    def predict(self, X):
+        return np.full(len(X), self.value, dtype=float)
+
+
+class _StringClassifier:
+    classes_ = np.array(["down", "up"])
+
+    def __init__(self, proba, classes=None):
+        self.proba = np.asarray(proba, dtype=float)
+        if classes is not None:
+            self.classes_ = np.asarray(classes)
+
+    def predict(self, X):
+        return self.classes_[np.argmax(self.predict_proba(X), axis=1)]
+
+    def predict_proba(self, X):
+        return np.tile(self.proba, (len(X), 1))
+
+
+class _VoteOnlyClassifier:
+    classes_ = np.array(["down", "up"])
+
+    def __init__(self, label):
+        self.label = label
+
+    def predict(self, X):
+        return np.full(len(X), self.label, dtype=object)
+
+class TestXGBoostClassifierLopezDePrado:
+    """Test Lopez de Prado XGBoost classifier compatibility."""
+
+    def test_predict_decodes_label_encoded_string_targets(self, monkeypatch):
+        from freqtrade.freqai.base_models.BaseClassifierModel import BaseClassifierModel
+        from freqtrade.freqai.prediction_models.XGBoostClassifierLopezDePrado import (
+            XGBoostClassifierLopezDePrado,
+        )
+
+        def _base_predict(self, unfiltered_df, dk, **kwargs):
+            return pd.DataFrame({"&target": [1, 0], 0: [0.2, 0.8], 1: [0.8, 0.2]}), np.ones(2)
+
+        monkeypatch.setattr(BaseClassifierModel, "predict", _base_predict)
+
+        model = XGBoostClassifierLopezDePrado.__new__(XGBoostClassifierLopezDePrado)
+        dk = type(
+            "DK",
+            (),
+            {
+                "label_list": ["&target"],
+                "data": {"labels_std": {"down": 1.0, "up": 1.0}},
+            },
+        )()
+
+        pred_df, do_predict = model.predict(pd.DataFrame(), dk)
+
+        assert pred_df["&target"].tolist() == ["up", "down"]
+        assert {"down", "up"}.issubset(pred_df.columns)
+        assert np.all(do_predict == 1)
+
+
 class TestLopezDePradoEnsemble:
     """Test Lopez de Prado ensemble wrapper."""
 
@@ -425,3 +505,68 @@ class TestLopezDePradoEnsemble:
         assert probas.shape == (len(X_test), 2)
         assert np.allclose(probas.sum(axis=1), 1.0)
         assert np.all(probas >= 0) and np.all(probas <= 1)
+
+    def test_regressor_ensemble_preserves_continuous_predictions(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X = np.zeros((4, 2))
+        ensemble = LopezDePradoEnsemble([_ConstantRegressor(0.2), _ConstantRegressor(0.7)])
+
+        predictions = ensemble.predict(X)
+
+        assert predictions.dtype.kind == "f"
+        assert np.allclose(predictions, 0.45)
+
+    def test_classifier_ensemble_uses_probability_average_with_string_labels(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X = np.zeros((3, 2))
+        ensemble = LopezDePradoEnsemble([
+            _StringClassifier([0.8, 0.2]),
+            _StringClassifier([0.1, 0.9]),
+            _StringClassifier([0.2, 0.8]),
+        ])
+
+        assert np.all(ensemble.predict(X) == "up")
+
+    def test_classifier_ensemble_majority_votes_string_labels_without_proba(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X = np.zeros((3, 2))
+        ensemble = LopezDePradoEnsemble([
+            _VoteOnlyClassifier("down"),
+            _VoteOnlyClassifier("up"),
+            _VoteOnlyClassifier("up"),
+        ])
+
+        assert np.all(ensemble.predict(X) == "up")
+
+    def test_classifier_ensemble_aligns_probability_columns_by_class_label(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X = np.zeros((2, 2))
+        ensemble = LopezDePradoEnsemble([
+            _StringClassifier([0.9, 0.1], classes=["down", "up"]),
+            _StringClassifier([0.8, 0.2], classes=["up", "down"]),
+            _StringClassifier([1.0], classes=["up"]),
+        ])
+
+        probas = ensemble.predict_proba(X)
+
+        assert list(ensemble.classes_) == ["down", "up"]
+        assert np.allclose(probas[:, 0], (0.9 + 0.2 + 0.0) / 3)
+        assert np.allclose(probas[:, 1], (0.1 + 0.8 + 1.0) / 3)
+        assert np.all(ensemble.predict(X) == "up")
+
+    def test_purged_cv_rejects_shuffled_train_dates(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
+
+        class _Model(LopezDePradoMixin):
+            freqai_info = {"feature_parameters": {"label_horizon_candles": 1}}
+
+        dates = pd.Series(pd.date_range("2024-01-01", periods=4, freq="1h"))
+        shuffled_dates = dates.iloc[[0, 2, 1, 3]].reset_index(drop=True)
+        dk = type("DK", (), {"data_dictionary": {"train_dates": shuffled_dates}})()
+
+        with pytest.raises(ValueError, match="chronologically ordered"):
+            _Model()._get_purged_cv(dk, _Model()._get_ldp_config(), X=np.zeros((4, 2)))

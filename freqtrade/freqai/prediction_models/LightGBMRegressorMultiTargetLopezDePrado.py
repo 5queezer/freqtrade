@@ -31,7 +31,7 @@ class LightGBMRegressorMultiTargetLopezDePrado(BaseRegressionModel, LopezDePrado
 
         logger.info(f"Training multi-target ensemble: {config['n_splits']} folds, {y.shape[1]} targets")
 
-        cv = self._get_purged_cv(dk, config)
+        cv = self._get_purged_cv(dk, config, X)
         target_ensembles = []
 
         for target_idx in range(y.shape[1]):

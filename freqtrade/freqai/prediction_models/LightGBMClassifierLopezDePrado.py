@@ -48,7 +48,7 @@ class LightGBMClassifierLopezDePrado(BaseClassifierModel, LopezDePradoMixin):
             f"embargo={config['embargo_pct']:.1%}"
         )
 
-        cv = self._get_purged_cv(dk, config)
+        cv = self._get_purged_cv(dk, config, X)
         models = []
         fold_scores = []
 

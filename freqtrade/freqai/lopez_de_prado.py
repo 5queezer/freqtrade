@@ -120,7 +120,7 @@ class PurgedKFold(BaseCrossValidator):
             else:
                 # Purged case: remove training samples that overlap with test set
                 train_indices = self._get_purged_train_indices(
-                    indices, test_indices, end_embargo
+                    X, indices, test_indices, end_embargo
                 )
 
             logger.debug(
@@ -133,50 +133,50 @@ class PurgedKFold(BaseCrossValidator):
             yield train_indices, test_indices
 
     def _get_purged_train_indices(
-        self, indices: npt.NDArray, test_indices: npt.NDArray, end_embargo: int
+        self, X: pd.DataFrame, indices: npt.NDArray, test_indices: npt.NDArray, end_embargo: int
     ) -> npt.NDArray:
         """
         Get training indices with purging.
 
-        Removes training samples whose information sets overlap with
-        the test set's information sets.
-
-        Parameters
-        ----------
-        indices : np.ndarray
-            All available indices
-        test_indices : np.ndarray
-            Test set indices
-        end_embargo : int
-            End of embargo period
-
-        Returns
-        -------
-        np.ndarray
-            Purged training indices
+        Removes training samples whose label interval overlaps with the test interval.
+        A sample interval is [sample start time, sample info end time].
         """
-        # Get time range of test set
-        test_times = self.samples_info_sets.iloc[test_indices]
-        min_test_time = test_times.min()
-        max_test_time = test_times.max()
+        if self.samples_info_sets is None:
+            raise ValueError("samples_info_sets must be provided for purged splits")
 
-        # Training candidates: before test start and after embargo
+        event_starts = self._get_event_start_times(X)
+        event_ends = self.samples_info_sets.reset_index(drop=True)
+
+        test_start = event_starts.iloc[test_indices].min()
+        test_end = event_ends.iloc[test_indices].max()
+
         train_candidates = np.concatenate([
             indices[:test_indices[0]],
             indices[end_embargo:]
         ])
 
-        # Purge: remove samples whose info sets overlap with test set
-        train_times = self.samples_info_sets.iloc[train_candidates]
+        train_starts = event_starts.iloc[train_candidates]
+        train_ends = event_ends.iloc[train_candidates]
+        non_overlapping = (train_ends < test_start) | (train_starts > test_end)
 
-        # Keep only samples that don't overlap with test period
-        non_overlapping = (
-            (train_times < min_test_time) | (train_times > max_test_time)
-        )
+        return train_candidates[non_overlapping.values]
 
-        purged_train_indices = train_candidates[non_overlapping.values]
-
-        return purged_train_indices
+    def _get_event_start_times(self, X: pd.DataFrame) -> pd.Series:
+        """Return event start timestamps aligned positionally with X rows."""
+        if self.samples_info_sets is None:
+            raise ValueError("samples_info_sets must be provided")
+        if len(self.samples_info_sets) != X.shape[0]:
+            raise ValueError(
+                "samples_info_sets must be aligned with X: "
+                f"got {len(self.samples_info_sets)} timestamps for {X.shape[0]} rows"
+            )
+        if isinstance(self.samples_info_sets.index, pd.DatetimeIndex):
+            starts = pd.Series(self.samples_info_sets.index, index=np.arange(X.shape[0]))
+        elif isinstance(X.index, pd.DatetimeIndex):
+            starts = pd.Series(X.index, index=np.arange(X.shape[0]))
+        else:
+            starts = pd.Series(np.arange(X.shape[0]), index=np.arange(X.shape[0]))
+        return starts.reset_index(drop=True)
 
     def get_n_splits(
         self, X: Optional[pd.DataFrame] = None, y: Optional[pd.Series] = None,
@@ -268,7 +268,7 @@ class CombinatorialPurgedKFold(BaseCrossValidator):
             # Apply embargo: remove training samples too close to test set
             if self.samples_info_sets is not None:
                 train_indices = self._apply_embargo_and_purge(
-                    train_indices, test_indices, embargo_size
+                    X, train_indices, test_indices, embargo_size
                 )
             else:
                 # Simple embargo without purging
@@ -287,23 +287,35 @@ class CombinatorialPurgedKFold(BaseCrossValidator):
             yield train_indices, test_indices
 
     def _apply_embargo_and_purge(
-        self, train_indices: npt.NDArray, test_indices: npt.NDArray, embargo_size: int
+        self, X: pd.DataFrame, train_indices: npt.NDArray, test_indices: npt.NDArray, embargo_size: int
     ) -> npt.NDArray:
         """Apply embargo and purging to training indices."""
-        test_times = self.samples_info_sets.iloc[test_indices]
-        min_test_time = test_times.min()
-        max_test_time = test_times.max()
+        if self.samples_info_sets is None:
+            raise ValueError("samples_info_sets must be provided for purged splits")
+        if len(self.samples_info_sets) != X.shape[0]:
+            raise ValueError(
+                "samples_info_sets must be aligned with X: "
+                f"got {len(self.samples_info_sets)} timestamps for {X.shape[0]} rows"
+            )
 
-        # Calculate embargo buffer
-        embargo_duration = test_times.iloc[-embargo_size:].max() if embargo_size > 0 else max_test_time
+        if isinstance(self.samples_info_sets.index, pd.DatetimeIndex):
+            event_starts = pd.Series(self.samples_info_sets.index, index=np.arange(X.shape[0]))
+        elif isinstance(X.index, pd.DatetimeIndex):
+            event_starts = pd.Series(X.index, index=np.arange(X.shape[0]))
+        else:
+            event_starts = pd.Series(np.arange(X.shape[0]), index=np.arange(X.shape[0]))
+        event_starts = event_starts.reset_index(drop=True)
+        event_ends = self.samples_info_sets.reset_index(drop=True)
 
-        train_times = self.samples_info_sets.iloc[train_indices]
+        test_start = event_starts.iloc[test_indices].min()
+        test_end = event_ends.iloc[test_indices].max()
+        if embargo_size > 0:
+            embargo_end_idx = min(test_indices.max() + embargo_size, X.shape[0] - 1)
+            test_end = max(test_end, event_ends.iloc[embargo_end_idx])
 
-        # Keep samples outside test period + embargo
-        valid_mask = (
-            (train_times < min_test_time) | (train_times > embargo_duration)
-        )
-
+        train_starts = event_starts.iloc[train_indices]
+        train_ends = event_ends.iloc[train_indices]
+        valid_mask = (train_ends < test_start) | (train_starts > test_end)
         return train_indices[valid_mask.values]
 
     def get_n_splits(

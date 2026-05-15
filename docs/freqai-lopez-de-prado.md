@@ -106,8 +106,10 @@ Lopez de Prado compliant models are available for all major boosting frameworks.
 **How ensemble training works:**
 1. Splits data into N purged folds with embargo
 2. Trains one model per fold
-3. Averages predictions across all models
+3. Aggregates predictions across all models (class-aligned probability voting for classifiers, mean for regressors)
 4. More robust than single model (reduces overfitting)
+
+Purged K-Fold CV requires chronologically ordered training rows. When `use_purged_kfold_cv` is enabled, `shuffle_after_split` is ignored to preserve timestamp alignment and valid embargo/purging behavior.
 
 ## Configuration Examples
 
