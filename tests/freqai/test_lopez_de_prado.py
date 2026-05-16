@@ -558,6 +558,50 @@ class TestLopezDePradoEnsemble:
         assert np.allclose(probas[:, 1], (0.1 + 0.8 + 1.0) / 3)
         assert np.all(ensemble.predict(X) == "up")
 
+    def test_purged_cv_uses_configured_constructor_with_explicit_event_end_times(self, monkeypatch):
+        import freqtrade.freqai.lopez_de_prado_ensemble as ensemble_module
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
+
+        captured = {}
+
+        class _PurgedKFold:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        class _Model(LopezDePradoMixin):
+            freqai_info = {
+                "feature_parameters": {
+                    "use_purged_kfold_cv": True,
+                    "purged_cv_n_splits": 4,
+                    "purged_cv_embargo_pct": 0.03,
+                    "label_horizon_candles": 1,
+                }
+            }
+
+        train_dates = pd.Series(pd.date_range("2024-01-01", periods=4, freq="1h"))
+        event_end_times = pd.Series(
+            pd.date_range("2024-01-01 02:00:00", periods=4, freq="1h"),
+            index=pd.DatetimeIndex(train_dates),
+        )
+        dk = type(
+            "DK",
+            (),
+            {
+                "data_dictionary": {
+                    "train_dates": train_dates,
+                    "train_event_end_times": event_end_times,
+                }
+            },
+        )()
+
+        monkeypatch.setattr(ensemble_module, "PurgedKFold", _PurgedKFold)
+
+        _Model()._get_purged_cv(dk, _Model()._get_ldp_config(), X=np.zeros((4, 2)))
+
+        assert captured["n_splits"] == 4
+        assert captured["pct_embargo"] == 0.03
+        pd.testing.assert_series_equal(captured["samples_info_sets"], event_end_times)
+
     def test_purged_cv_rejects_shuffled_train_dates(self):
         from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
 

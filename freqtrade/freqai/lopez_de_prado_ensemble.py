@@ -37,26 +37,10 @@ class LopezDePradoMixin:
 
     def _get_purged_cv(self, dk, config, X=None):
         """Create a PurgedKFold cross-validator aligned to training rows."""
-        close_times = None
-        if config["label_horizon"] > 0:
-            train_dates = None
-            if getattr(dk, "data_dictionary", None):
-                train_dates = dk.data_dictionary.get("train_dates")
-            if train_dates is None or len(train_dates) == 0:
-                train_dates = dk.train_dates
-            train_dates = pd.Series(train_dates).reset_index(drop=True)
-
-            if X is not None and len(train_dates) != len(X):
-                raise ValueError(
-                    "Purged CV train_dates must align with train_features: "
-                    f"got {len(train_dates)} dates for {len(X)} rows"
-                )
-            if len(train_dates) >= 2 and not train_dates.is_monotonic_increasing:
-                raise ValueError(
-                    "Purged CV requires chronologically ordered train_dates. "
-                    "Disable shuffle_after_split or preserve timestamp order."
-                )
-
+        data_dictionary = getattr(dk, "data_dictionary", {}) or {}
+        close_times = self._get_event_end_times(dk, data_dictionary, X)
+        if close_times is None and config["label_horizon"] > 0:
+            train_dates = self._get_train_dates(dk, data_dictionary, X)
             if len(train_dates) >= 2:
                 freq = pd.to_timedelta(train_dates.diff().median())
                 close_times = train_dates + freq * config["label_horizon"]
@@ -66,8 +50,60 @@ class LopezDePradoMixin:
         return PurgedKFold(
             n_splits=config["n_splits"],
             samples_info_sets=close_times,
-            pct_embargo=config["embargo_pct"]
+            pct_embargo=config["embargo_pct"],
         )
+
+    def _get_event_end_times(self, dk, data_dictionary, X=None):
+        """Return explicit event end times (t1) aligned to training rows when available."""
+        close_times = None
+        for key in ("train_event_end_times", "event_end_times", "train_t1", "t1"):
+            value = data_dictionary.get(key)
+            if value is not None and len(value) > 0:
+                close_times = value
+                break
+
+        if close_times is None:
+            for attr in ("train_event_end_times", "event_end_times", "train_t1", "t1"):
+                value = getattr(dk, attr, None)
+                if value is not None and len(value) > 0:
+                    close_times = value
+                    break
+
+        if close_times is None:
+            return None
+
+        close_times = pd.Series(close_times).copy()
+        if X is not None and len(close_times) != len(X):
+            raise ValueError(
+                "Purged CV event_end_times must align with train_features: "
+                f"got {len(close_times)} timestamps for {len(X)} rows"
+            )
+
+        if not isinstance(close_times.index, pd.DatetimeIndex):
+            train_dates = self._get_train_dates(dk, data_dictionary, X)
+            close_times.index = pd.DatetimeIndex(train_dates)
+
+        return close_times
+
+    def _get_train_dates(self, dk, data_dictionary, X=None):
+        """Return chronological training timestamps aligned to training rows."""
+        train_dates = data_dictionary.get("train_dates")
+        if train_dates is None or len(train_dates) == 0:
+            train_dates = dk.train_dates
+        train_dates = pd.Series(train_dates).reset_index(drop=True)
+
+        if X is not None and len(train_dates) != len(X):
+            raise ValueError(
+                "Purged CV train_dates must align with train_features: "
+                f"got {len(train_dates)} dates for {len(X)} rows"
+            )
+        if len(train_dates) >= 2 and not train_dates.is_monotonic_increasing:
+            raise ValueError(
+                "Purged CV requires chronologically ordered train_dates. "
+                "Disable shuffle_after_split or preserve timestamp order."
+            )
+
+        return train_dates
 
     def _log_ensemble_complete(self, fold_scores, model_type="model"):
         """Log ensemble training completion statistics."""
