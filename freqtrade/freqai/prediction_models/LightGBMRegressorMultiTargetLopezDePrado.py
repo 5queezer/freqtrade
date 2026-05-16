@@ -7,7 +7,9 @@ from freqtrade.freqai.base_models.BaseRegressionModel import BaseRegressionModel
 from freqtrade.freqai.base_models.FreqaiMultiOutputRegressor import FreqaiMultiOutputRegressor
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.lopez_de_prado_ensemble import (
-    LopezDePradoEnsemble, LopezDePradoMixin, MultiTargetRegressorEnsembleWrapper,
+    LopezDePradoEnsemble,
+    LopezDePradoMixin,
+    MultiTargetRegressorEnsembleWrapper,
 )
 
 
@@ -29,7 +31,9 @@ class LightGBMRegressorMultiTargetLopezDePrado(BaseRegressionModel, LopezDePrado
             logger.info("Training multi-target LightGBM regressor (purged CV disabled)")
             return self._train_multi_target_single(X, y, sample_weight, data_dictionary, dk)
 
-        logger.info(f"Training multi-target ensemble: {config['n_splits']} folds, {y.shape[1]} targets")
+        logger.info(
+            f"Training multi-target ensemble: {config['n_splits']} folds, {y.shape[1]} targets"
+        )
 
         cv = self._get_purged_cv(dk, config, X)
         target_ensembles = []
@@ -41,17 +45,24 @@ class LightGBMRegressorMultiTargetLopezDePrado(BaseRegressionModel, LopezDePrado
             for fold_idx, (train_idx, val_idx) in enumerate(cv.split(X), 1):
                 model = LGBMRegressor(**self.model_training_parameters)
                 model.fit(
-                    X=X.iloc[train_idx], y=y_single.iloc[train_idx],
+                    X=X.iloc[train_idx],
+                    y=y_single.iloc[train_idx],
                     sample_weight=sample_weight[train_idx],
                     eval_set=[(X.iloc[val_idx], y_single.iloc[val_idx])],
                     eval_sample_weight=[sample_weight[val_idx]],
                 )
-                fold_scores.append(model.score(
-                    X.iloc[val_idx], y_single.iloc[val_idx], sample_weight=sample_weight[val_idx]
-                ))
+                fold_scores.append(
+                    model.score(
+                        X.iloc[val_idx],
+                        y_single.iloc[val_idx],
+                        sample_weight=sample_weight[val_idx],
+                    )
+                )
                 models.append(model)
 
-            logger.info(f"Target {target_idx + 1}: avg R² = {sum(fold_scores)/len(fold_scores):.4f}")
+            logger.info(
+                f"Target {target_idx + 1}: avg R² = {sum(fold_scores) / len(fold_scores):.4f}"
+            )
             target_ensembles.append(LopezDePradoEnsemble(models))
 
         return MultiTargetRegressorEnsembleWrapper(target_ensembles)
@@ -64,10 +75,23 @@ class LightGBMRegressorMultiTargetLopezDePrado(BaseRegressionModel, LopezDePrado
         if self.freqai_info.get("data_split_parameters", {}).get("test_size", 0.1) != 0:
             eval_weights = [data_dictionary["test_weights"]]
             for i in range(y.shape[1]):
-                eval_sets[i] = [(data_dictionary["test_features"], data_dictionary["test_labels"].iloc[:, i])]
+                eval_sets[i] = [
+                    (data_dictionary["test_features"], data_dictionary["test_labels"].iloc[:, i])
+                ]
 
-        init_models = self.get_init_model(dk.pair).estimators_ if self.get_init_model(dk.pair) else [None] * y.shape[1]
-        fit_params = [{"eval_set": eval_sets[i], "eval_sample_weight": eval_weights, "init_model": init_models[i]} for i in range(y.shape[1])]
+        init_models = (
+            self.get_init_model(dk.pair).estimators_
+            if self.get_init_model(dk.pair)
+            else [None] * y.shape[1]
+        )
+        fit_params = [
+            {
+                "eval_set": eval_sets[i],
+                "eval_sample_weight": eval_weights,
+                "init_model": init_models[i],
+            }
+            for i in range(y.shape[1])
+        ]
 
         model = FreqaiMultiOutputRegressor(estimator=lgb)
         if self.freqai_info.get("multitarget_parallel_training", False):
