@@ -1,0 +1,17 @@
+problem: Finish FreqAI Lopez de Prado walk-forward and purged-CV leakage hardening
+approach: Added test-first coverage for train/backtest window validation and current-fit event-end propagation, then threaded data_dictionary into all Lopez de Prado model CV constructors and documented outer walk-forward vs inner purged CV boundaries
+failed_paths:
+  - Full pytest target remains blocked locally by missing xdist in tests/conftest.py
+verification:
+  - git diff --check
+  - python -m py_compile freqtrade/freqai/data_kitchen.py freqtrade/freqai/lopez_de_prado_ensemble.py tests/freqai/test_freqai_datakitchen.py tests/freqai/test_lopez_de_prado.py freqtrade/freqai/prediction_models/*LopezDePrado.py
+  - python -m ruff check freqtrade/freqai/data_kitchen.py freqtrade/freqai/lopez_de_prado_ensemble.py tests/freqai/test_freqai_datakitchen.py tests/freqai/test_lopez_de_prado.py freqtrade/freqai/prediction_models/*LopezDePrado.py
+workflow_learning: For FreqAI leakage-safety changes, distinguish outer walk-forward windows from inner purged CV, and pass current fit data explicitly rather than relying on dk cached state
+related_files:
+  - freqtrade/freqai/data_kitchen.py
+  - freqtrade/freqai/lopez_de_prado_ensemble.py
+  - freqtrade/freqai/prediction_models/*LopezDePrado.py
+  - tests/freqai/test_freqai_datakitchen.py
+  - tests/freqai/test_lopez_de_prado.py
+  - docs/freqai-running.md
+  - docs/freqai-lopez-de-prado.md
