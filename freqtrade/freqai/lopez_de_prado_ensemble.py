@@ -35,9 +35,9 @@ class LopezDePradoMixin:
         """Check if ensemble training should be used."""
         return config["use_purged_cv"] and config["n_splits"] >= 3
 
-    def _get_purged_cv(self, dk, config, X=None):
+    def _get_purged_cv(self, dk, config, X=None, data_dictionary=None):
         """Create a PurgedKFold cross-validator aligned to training rows."""
-        data_dictionary = getattr(dk, "data_dictionary", {}) or {}
+        data_dictionary = data_dictionary or getattr(dk, "data_dictionary", {}) or {}
         close_times = self._get_event_end_times(dk, data_dictionary, X)
         if close_times is None and config["label_horizon"] > 0:
             train_dates = self._get_train_dates(dk, data_dictionary, X)
@@ -79,9 +79,16 @@ class LopezDePradoMixin:
                 f"got {len(close_times)} timestamps for {len(X)} rows"
             )
 
-        if not isinstance(close_times.index, pd.DatetimeIndex):
+        if isinstance(close_times.index, pd.DatetimeIndex):
+            train_dates = pd.Series(close_times.index)
+        else:
             train_dates = self._get_train_dates(dk, data_dictionary, X)
             close_times.index = pd.DatetimeIndex(train_dates)
+
+        event_ends = pd.to_datetime(close_times.reset_index(drop=True))
+        event_starts = pd.to_datetime(pd.Series(train_dates).reset_index(drop=True))
+        if (event_ends < event_starts).any():
+            raise ValueError("Purged CV event_end_times must not be earlier than train_dates")
 
         return close_times
 

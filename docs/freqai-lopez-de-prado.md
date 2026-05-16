@@ -109,7 +109,9 @@ Lopez de Prado compliant models are available for all major boosting frameworks.
 3. Aggregates predictions across all models (class-aligned probability voting for classifiers, mean for regressors)
 4. More robust than single model (reduces overfitting)
 
-Purged K-Fold CV requires chronologically ordered training rows. When `use_purged_kfold_cv` is enabled, `shuffle_after_split` is ignored to preserve timestamp alignment and valid embargo/purging behavior.
+Purged K-Fold CV requires chronologically ordered training rows. When `use_purged_kfold_cv` is enabled, `shuffle_after_split` is ignored to preserve timestamp alignment and valid embargo/purging behavior. If the training data includes explicit event end timestamps (`train_event_end_times`, `event_end_times`, `train_t1`, or `t1`), Lopez de Prado ensembles use those timestamps for purging instead of inferring horizons from candle spacing. Event end timestamps must align one-for-one with the current training rows and must not be earlier than their corresponding training timestamps.
+
+FreqAI walk-forward backtesting and Lopez de Prado Purged K-Fold CV are complementary. The outer FreqAI walk-forward loop trains on `train_period_days` and predicts the next `backtest_period_days`; the inner purged CV loop validates model folds inside each training window.
 
 ## Configuration Examples
 

@@ -462,10 +462,11 @@ class TestLopezDePradoEnsemble:
     """Test Lopez de Prado ensemble wrapper."""
 
     def test_ensemble_predict(self):
-        from freqtrade.freqai.prediction_models.LightGBMClassifierLopezDePrado import (
-            LopezDePradoEnsemble
-        )
         from sklearn.ensemble import RandomForestClassifier
+
+        from freqtrade.freqai.prediction_models.LightGBMClassifierLopezDePrado import (
+            LopezDePradoEnsemble,
+        )
 
         X_train = np.random.randn(100, 5)
         y_train = np.random.randint(0, 2, 100)
@@ -484,10 +485,11 @@ class TestLopezDePradoEnsemble:
         assert np.all(np.isin(predictions, [0, 1]))
 
     def test_ensemble_predict_proba(self):
-        from freqtrade.freqai.prediction_models.LightGBMClassifierLopezDePrado import (
-            LopezDePradoEnsemble
-        )
         from sklearn.ensemble import RandomForestClassifier
+
+        from freqtrade.freqai.prediction_models.LightGBMClassifierLopezDePrado import (
+            LopezDePradoEnsemble,
+        )
 
         X_train = np.random.randn(100, 5)
         y_train = np.random.randint(0, 2, 100)
@@ -601,6 +603,83 @@ class TestLopezDePradoEnsemble:
         assert captured["n_splits"] == 4
         assert captured["pct_embargo"] == 0.03
         pd.testing.assert_series_equal(captured["samples_info_sets"], event_end_times)
+
+    def test_purged_cv_prefers_current_fit_event_end_times(self, monkeypatch):
+        import freqtrade.freqai.lopez_de_prado_ensemble as ensemble_module
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
+
+        captured = {}
+
+        class _PurgedKFold:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        class _Model(LopezDePradoMixin):
+            freqai_info = {
+                "feature_parameters": {
+                    "use_purged_kfold_cv": True,
+                    "purged_cv_n_splits": 3,
+                    "purged_cv_embargo_pct": 0.01,
+                    "label_horizon_candles": 1,
+                }
+            }
+
+        train_dates = pd.Series(pd.date_range("2024-01-01", periods=4, freq="1h"))
+        stale_event_end_times = pd.Series(
+            pd.date_range("2024-01-01 01:00:00", periods=4, freq="1h"),
+            index=pd.DatetimeIndex(train_dates),
+        )
+        current_event_end_times = pd.Series(
+            pd.date_range("2024-01-01 03:00:00", periods=4, freq="1h"),
+            index=pd.DatetimeIndex(train_dates),
+        )
+        dk = type(
+            "DK",
+            (),
+            {
+                "data_dictionary": {
+                    "train_dates": train_dates,
+                    "train_event_end_times": stale_event_end_times,
+                }
+            },
+        )()
+        data_dictionary = {
+            "train_dates": train_dates,
+            "train_event_end_times": current_event_end_times,
+        }
+
+        monkeypatch.setattr(ensemble_module, "PurgedKFold", _PurgedKFold)
+
+        _Model()._get_purged_cv(
+            dk, _Model()._get_ldp_config(), X=np.zeros((4, 2)), data_dictionary=data_dictionary
+        )
+
+        pd.testing.assert_series_equal(captured["samples_info_sets"], current_event_end_times)
+
+    def test_purged_cv_rejects_event_end_times_before_train_dates(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
+
+        class _Model(LopezDePradoMixin):
+            freqai_info = {"feature_parameters": {"label_horizon_candles": 1}}
+
+        train_dates = pd.Series(pd.date_range("2024-01-01", periods=4, freq="1h"))
+        event_end_times = pd.Series(
+            pd.date_range("2023-12-31 23:00:00", periods=4, freq="1h"),
+            index=pd.DatetimeIndex(train_dates),
+        )
+        dk = type(
+            "DK",
+            (),
+            {
+                "data_dictionary": {
+                    "train_dates": train_dates,
+                    "train_event_end_times": event_end_times,
+                }
+            },
+        )()
+
+        with pytest.raises(ValueError, match="must not be earlier than train_dates"):
+            _Model()._get_purged_cv(dk, _Model()._get_ldp_config(), X=np.zeros((4, 2)))
 
     def test_purged_cv_rejects_shuffled_train_dates(self):
         from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin

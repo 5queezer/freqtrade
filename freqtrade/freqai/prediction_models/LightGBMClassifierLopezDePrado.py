@@ -1,7 +1,6 @@
 import logging
 from typing import Any
 
-import numpy as np
 from lightgbm import LGBMClassifier
 
 from freqtrade.freqai.base_models.BaseClassifierModel import BaseClassifierModel
@@ -48,7 +47,7 @@ class LightGBMClassifierLopezDePrado(BaseClassifierModel, LopezDePradoMixin):
             f"embargo={config['embargo_pct']:.1%}"
         )
 
-        cv = self._get_purged_cv(dk, config, X)
+        cv = self._get_purged_cv(dk, config, X, data_dictionary=data_dictionary)
         models = []
         fold_scores = []
 

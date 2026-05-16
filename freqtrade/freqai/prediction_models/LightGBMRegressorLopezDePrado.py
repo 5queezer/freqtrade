@@ -31,7 +31,7 @@ class LightGBMRegressorLopezDePrado(BaseRegressionModel, LopezDePradoMixin):
             f"embargo={config['embargo_pct']:.1%}"
         )
 
-        cv = self._get_purged_cv(dk, config, X)
+        cv = self._get_purged_cv(dk, config, X, data_dictionary=data_dictionary)
         models = []
         fold_scores = []
 

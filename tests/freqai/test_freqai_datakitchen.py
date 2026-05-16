@@ -33,11 +33,11 @@ def test_create_fulltimerange(
     shutil.rmtree(Path(dk.full_path))
 
 
-def test_create_fulltimerange_incorrect_backtest_period(mocker, freqai_conf):
+def test_create_fulltimerange_incorrect_train_period(mocker, freqai_conf):
     dk = get_patched_data_kitchen(mocker, freqai_conf)
-    with pytest.raises(OperationalException, match=r"backtest_period_days must be an integer"):
+    with pytest.raises(OperationalException, match=r"train_period_days must be an integer"):
         dk.create_fulltimerange("20220101-20220201", 0.5)
-    with pytest.raises(OperationalException, match=r"backtest_period_days must be positive"):
+    with pytest.raises(OperationalException, match=r"train_period_days must be positive"):
         dk.create_fulltimerange("20220101-20220201", -1)
     shutil.rmtree(Path(dk.full_path))
 
@@ -62,6 +62,10 @@ def test_split_timerange(
         OperationalException, match=r"train_period_days must be an integer greater than 0."
     ):
         dk.split_timerange("20220101-20220201", -1, 0.5)
+    with pytest.raises(
+        OperationalException, match=r"backtest_period_days must be a positive number."
+    ):
+        dk.split_timerange("20220101-20220201", 30, "0.5")
     shutil.rmtree(Path(dk.full_path))
 
 

@@ -139,9 +139,14 @@ class FreqaiDataKitchen:
         use_purged_cv = feat_dict.get("use_purged_kfold_cv", False)
 
         if use_purged_cv:
-            train_features, test_features, train_labels, test_labels, train_weights, test_weights = (
-                self._split_with_purged_kfold(filtered_dataframe, labels, weights)
-            )
+            (
+                train_features,
+                test_features,
+                train_labels,
+                test_labels,
+                train_weights,
+                test_weights,
+            ) = self._split_with_purged_kfold(filtered_dataframe, labels, weights)
         elif self.freqai_config.get("data_split_parameters", {}).get("test_size", 0.1) != 0:
             (
                 train_features,
@@ -337,6 +342,10 @@ class FreqaiDataKitchen:
         if not isinstance(train_split, int) or train_split < 1:
             raise OperationalException(
                 f"train_period_days must be an integer greater than 0. Got {train_split}."
+            )
+        if not isinstance(bt_split, (int, float)) or bt_split <= 0:
+            raise OperationalException(
+                f"backtest_period_days must be a positive number. Got {bt_split}."
             )
         train_period_days = train_split * SECONDS_IN_DAY
         bt_period = bt_split * SECONDS_IN_DAY
@@ -575,12 +584,12 @@ class FreqaiDataKitchen:
 
         return
 
-    def create_fulltimerange(self, backtest_tr: str, backtest_period_days: int) -> str:
-        if not isinstance(backtest_period_days, int):
-            raise OperationalException("backtest_period_days must be an integer")
+    def create_fulltimerange(self, backtest_tr: str, train_period_days: int) -> str:
+        if not isinstance(train_period_days, int):
+            raise OperationalException("train_period_days must be an integer")
 
-        if backtest_period_days < 0:
-            raise OperationalException("backtest_period_days must be positive")
+        if train_period_days < 0:
+            raise OperationalException("train_period_days must be positive")
 
         backtest_timerange = TimeRange.parse_timerange(backtest_tr)
 
@@ -598,9 +607,7 @@ class FreqaiDataKitchen:
             #     datetime.now(tz=timezone.utc).timestamp()
             # )
 
-        backtest_timerange.startts = (
-            backtest_timerange.startts - backtest_period_days * SECONDS_IN_DAY
-        )
+        backtest_timerange.startts = backtest_timerange.startts - train_period_days * SECONDS_IN_DAY
         full_timerange = backtest_timerange.timerange_str
         config_path = Path(self.config["config_files"][0])
 

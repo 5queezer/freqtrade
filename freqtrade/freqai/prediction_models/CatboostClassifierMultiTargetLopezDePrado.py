@@ -36,7 +36,7 @@ class CatboostClassifierMultiTargetLopezDePrado(BaseClassifierModel, LopezDePrad
             f"Training multi-target ensemble: {config['n_splits']} folds, {y.shape[1]} targets"
         )
 
-        cv = self._get_purged_cv(dk, config, X)
+        cv = self._get_purged_cv(dk, config, X, data_dictionary=data_dictionary)
         target_ensembles = []
 
         for target_idx in range(y.shape[1]):
