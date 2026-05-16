@@ -15,7 +15,7 @@ Key features:
 
 import itertools
 import logging
-from typing import Iterator, Optional, Tuple
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
@@ -60,7 +60,7 @@ class PurgedKFold(BaseCrossValidator):
     def __init__(
         self,
         n_splits: int = 3,
-        samples_info_sets: Optional[pd.Series] = None,
+        samples_info_sets: pd.Series | None = None,
         pct_embargo: float = 0.01,
     ):
         if n_splits < 2:
@@ -71,8 +71,8 @@ class PurgedKFold(BaseCrossValidator):
         self.pct_embargo = pct_embargo
 
     def split(
-        self, X: pd.DataFrame, y: Optional[pd.Series] = None, groups: Optional[pd.Series] = None
-    ) -> Iterator[Tuple[npt.NDArray, npt.NDArray]]:
+        self, X: pd.DataFrame, y: pd.Series | None = None, groups: pd.Series | None = None
+    ) -> Iterator[tuple[npt.NDArray, npt.NDArray]]:
         """
         Generate indices to split data into training and test set.
 
@@ -96,11 +96,13 @@ class PurgedKFold(BaseCrossValidator):
             raise ValueError("X must be a pandas DataFrame or Series with a DatetimeIndex")
 
         indices = np.arange(X.shape[0])
+        if self.n_splits > len(indices):
+            raise ValueError(
+                f"n_splits ({self.n_splits}) cannot exceed number of samples ({len(indices)})"
+            )
         embargo_size = int(X.shape[0] * self.pct_embargo)
 
-        test_ranges = [
-            (i[0], i[-1] + 1) for i in np.array_split(indices, self.n_splits)
-        ]
+        test_ranges = [(i[0], i[-1] + 1) for i in np.array_split(indices, self.n_splits)]
 
         for start_test, end_test in test_ranges:
             # Test set indices
@@ -113,10 +115,7 @@ class PurgedKFold(BaseCrossValidator):
             # Exclude test set and embargo period
             if self.samples_info_sets is None:
                 # Simple case: no purging, just use temporal split with embargo
-                train_indices = np.concatenate([
-                    indices[:start_test],
-                    indices[end_embargo:]
-                ])
+                train_indices = np.concatenate([indices[:start_test], indices[end_embargo:]])
             else:
                 # Purged case: remove training samples that overlap with test set
                 train_indices = self._get_purged_train_indices(
@@ -150,10 +149,7 @@ class PurgedKFold(BaseCrossValidator):
         test_start = event_starts.iloc[test_indices].min()
         test_end = event_ends.iloc[test_indices].max()
 
-        train_candidates = np.concatenate([
-            indices[:test_indices[0]],
-            indices[end_embargo:]
-        ])
+        train_candidates = np.concatenate([indices[: test_indices[0]], indices[end_embargo:]])
 
         train_starts = event_starts.iloc[train_candidates]
         train_ends = event_ends.iloc[train_candidates]
@@ -179,8 +175,10 @@ class PurgedKFold(BaseCrossValidator):
         return starts.reset_index(drop=True)
 
     def get_n_splits(
-        self, X: Optional[pd.DataFrame] = None, y: Optional[pd.Series] = None,
-        groups: Optional[pd.Series] = None
+        self,
+        X: pd.DataFrame | None = None,
+        y: pd.Series | None = None,
+        groups: pd.Series | None = None,
     ) -> int:
         """Returns the number of splitting iterations."""
         return self.n_splits
@@ -222,7 +220,7 @@ class CombinatorialPurgedKFold(BaseCrossValidator):
         self,
         n_splits: int = 5,
         n_test_splits: int = 2,
-        samples_info_sets: Optional[pd.Series] = None,
+        samples_info_sets: pd.Series | None = None,
         pct_embargo: float = 0.01,
     ):
         if n_splits < 3:
@@ -238,8 +236,8 @@ class CombinatorialPurgedKFold(BaseCrossValidator):
         self.pct_embargo = pct_embargo
 
     def split(
-        self, X: pd.DataFrame, y: Optional[pd.Series] = None, groups: Optional[pd.Series] = None
-    ) -> Iterator[Tuple[npt.NDArray, npt.NDArray]]:
+        self, X: pd.DataFrame, y: pd.Series | None = None, groups: pd.Series | None = None
+    ) -> Iterator[tuple[npt.NDArray, npt.NDArray]]:
         """Generate combinatorial train/test splits."""
         if not isinstance(X, (pd.DataFrame, pd.Series)):
             raise ValueError("X must be a pandas DataFrame or Series")
@@ -250,9 +248,7 @@ class CombinatorialPurgedKFold(BaseCrossValidator):
         group_indices = np.array_split(indices, self.n_splits)
 
         # Generate all combinations of test groups
-        test_group_combinations = itertools.combinations(
-            range(self.n_splits), self.n_test_splits
-        )
+        test_group_combinations = itertools.combinations(range(self.n_splits), self.n_test_splits)
 
         embargo_size = int(X.shape[0] * self.pct_embargo)
 
@@ -276,9 +272,8 @@ class CombinatorialPurgedKFold(BaseCrossValidator):
                 test_end = test_indices.max()
 
                 # Remove samples within embargo period
-                train_mask = (
-                    (train_indices < test_start - embargo_size) |
-                    (train_indices > test_end + embargo_size)
+                train_mask = (train_indices < test_start - embargo_size) | (
+                    train_indices > test_end + embargo_size
                 )
                 train_indices = train_indices[train_mask]
 
@@ -287,7 +282,11 @@ class CombinatorialPurgedKFold(BaseCrossValidator):
             yield train_indices, test_indices
 
     def _apply_embargo_and_purge(
-        self, X: pd.DataFrame, train_indices: npt.NDArray, test_indices: npt.NDArray, embargo_size: int
+        self,
+        X: pd.DataFrame,
+        train_indices: npt.NDArray,
+        test_indices: npt.NDArray,
+        embargo_size: int,
     ) -> npt.NDArray:
         """Apply embargo and purging to training indices."""
         if self.samples_info_sets is None:
@@ -319,18 +318,19 @@ class CombinatorialPurgedKFold(BaseCrossValidator):
         return train_indices[valid_mask.values]
 
     def get_n_splits(
-        self, X: Optional[pd.DataFrame] = None, y: Optional[pd.Series] = None,
-        groups: Optional[pd.Series] = None
+        self,
+        X: pd.DataFrame | None = None,
+        y: pd.Series | None = None,
+        groups: pd.Series | None = None,
     ) -> int:
         """Returns the number of splitting iterations."""
         from math import comb
+
         return comb(self.n_splits, self.n_test_splits)
 
 
 def get_sample_weights_by_time_decay(
-    dates: pd.Series,
-    decay_factor: float = 1.0,
-    last_date: Optional[pd.Timestamp] = None
+    dates: pd.Series, decay_factor: float = 1.0, last_date: pd.Timestamp | None = None
 ) -> npt.NDArray:
     """
     Calculate sample weights using exponential time decay.
@@ -361,7 +361,11 @@ def get_sample_weights_by_time_decay(
         last_date = dates.max()
 
     # Convert to days from last_date
-    time_diffs = (last_date - dates).total_seconds().values / 86400.0  # days
+    deltas = last_date - dates
+    if hasattr(deltas, "dt"):
+        time_diffs = deltas.dt.total_seconds().to_numpy() / 86400.0
+    else:
+        time_diffs = np.asarray(deltas.total_seconds(), dtype=float) / 86400.0
 
     if decay_factor == 0:
         weights = np.ones(len(dates))
@@ -379,10 +383,7 @@ def get_sample_weights_by_time_decay(
     return weights
 
 
-def get_sample_weights_by_returns(
-    returns: pd.Series,
-    span: int = 60
-) -> npt.NDArray:
+def get_sample_weights_by_returns(returns: pd.Series, span: int = 60) -> npt.NDArray:
     """
     Calculate sample weights based on return volatility.
 
@@ -418,8 +419,8 @@ def get_sample_weights_by_returns(
 
 def get_sample_weights_by_uniqueness(
     close_times: pd.Series,
-    molecule: Optional[npt.NDArray] = None,
-    num_concurrent_labels: Optional[pd.Series] = None,
+    molecule: npt.NDArray | None = None,
+    num_concurrent_labels: pd.Series | None = None,
 ) -> pd.Series:
     """
     Calculate sample weights by uniqueness (inverse of label overlap).
@@ -469,9 +470,7 @@ def get_sample_weights_by_uniqueness(
         end_time = close_times.loc[i]
 
         # Find all samples active during this period
-        active_samples = close_times[
-            (close_times.index <= end_time) & (close_times >= start_time)
-        ]
+        active_samples = close_times[(close_times.index <= end_time) & (close_times >= start_time)]
 
         # Weight is inverse of average concurrency during this sample's lifetime
         uniqueness = 0.0
@@ -512,23 +511,23 @@ def get_num_concurrent_labels(close_times: pd.Series) -> pd.Series:
 
     for start_time, end_time in close_times.items():
         events.append((start_time, 1))  # Label starts
-        events.append((end_time, -1))   # Label ends
+        events.append((end_time, -1))  # Label ends
 
     # Sort events by time
-    events_df = pd.DataFrame(events, columns=['time', 'event'])
-    events_df = events_df.sort_values('time')
+    events_df = pd.DataFrame(events, columns=["time", "event"])
+    events_df = events_df.sort_values("time")
 
     # Cumulative sum gives concurrent labels at each point
-    events_df['concurrent'] = events_df['event'].cumsum()
+    events_df["concurrent"] = events_df["event"].cumsum()
 
     # Get concurrency at each label start time
     concurrency = pd.Series(index=close_times.index, dtype=int)
 
     for idx in close_times.index:
         # Find concurrency at this timestamp
-        mask = events_df['time'] <= idx
+        mask = events_df["time"] <= idx
         if mask.any():
-            concurrency.loc[idx] = events_df.loc[mask, 'concurrent'].iloc[-1]
+            concurrency.loc[idx] = events_df.loc[mask, "concurrent"].iloc[-1]
         else:
             concurrency.loc[idx] = 1
 
@@ -537,9 +536,9 @@ def get_num_concurrent_labels(close_times: pd.Series) -> pd.Series:
 
 def seq_bootstrap(
     indicators: pd.DataFrame,
-    sample_weights: Optional[pd.Series] = None,
-    n_samples: Optional[int] = None,
-    random_state: Optional[int] = None,
+    sample_weights: pd.Series | None = None,
+    n_samples: int | None = None,
+    random_state: int | None = None,
 ) -> npt.NDArray:
     """
     Sequential Bootstrap that respects temporal structure.
@@ -612,11 +611,7 @@ def seq_bootstrap(
     return np.array(bootstrap_indices)
 
 
-def frac_diff_ffd(
-    series: pd.Series,
-    d: float,
-    threshold: float = 0.01
-) -> pd.Series:
+def frac_diff_ffd(series: pd.Series, d: float, threshold: float = 0.01) -> pd.Series:
     """
     Fractionally differentiate a time series (FFD = Fixed-width window Fracdiff).
 
@@ -660,6 +655,9 @@ def frac_diff_ffd(
     For stationarity testing, use ADF test and find minimum d where
     the series becomes stationary.
     """
+    if not np.isfinite(threshold) or threshold <= 0:
+        raise ValueError(f"threshold must be a positive finite number, got {threshold}")
+
     # Compute binomial weights
     weights = [1.0]
     k = 1
@@ -674,19 +672,19 @@ def frac_diff_ffd(
         weights.append(weight)
         k += 1
 
-    weights = np.array(weights)
+    weights_array = np.array(weights)
 
     # Apply weights using convolution
     # Pad the series at the start to avoid losing too many observations
-    width = len(weights) - 1
+    width = len(weights_array) - 1
 
     # Create result series
     result = pd.Series(index=series.index, dtype=float)
 
     for i in range(width, len(series)):
         # Apply weights to window
-        window = series.iloc[i - width:i + 1].values[::-1]  # Reverse for convolution
-        result.iloc[i] = np.dot(window, weights[:len(window)])
+        window = series.iloc[i - width : i + 1].values[::-1]  # Reverse for convolution
+        result.iloc[i] = np.dot(window, weights_array[: len(window)])
 
     return result.dropna()
 
@@ -731,9 +729,7 @@ def get_optimal_frac_diff_order(
     try:
         from statsmodels.tsa.stattools import adfuller
     except ImportError:
-        logger.warning(
-            "statsmodels not installed. Cannot perform ADF test. Returning d=0.5"
-        )
+        logger.warning("statsmodels not installed. Cannot perform ADF test. Returning d=0.5")
         return 0.5
 
     d_values = np.arange(0, max_d + step, step)
@@ -747,22 +743,19 @@ def get_optimal_frac_diff_order(
 
         # Perform ADF test
         try:
-            adf_result = adfuller(diff_series.dropna(), maxlag=1, regression='c', autolag=None)
+            adf_result = adfuller(diff_series.dropna(), maxlag=1, regression="c", autolag=None)
             p_value = adf_result[1]
 
             # If p-value < significance, series is stationary
             if p_value < significance:
-                logger.info(
-                    f"Found optimal d={d:.3f} (ADF p-value={p_value:.4f})"
-                )
+                logger.info(f"Found optimal d={d:.3f} (ADF p-value={p_value:.4f})")
                 return d
         except Exception as e:
             logger.warning(f"ADF test failed for d={d}: {e}")
             continue
 
     logger.warning(
-        f"Could not find d < {max_d} that makes series stationary. "
-        f"Returning max_d={max_d}"
+        f"Could not find d < {max_d} that makes series stationary. Returning max_d={max_d}"
     )
     return max_d
 
@@ -772,8 +765,8 @@ def get_events_triple_barrier(
     events: pd.DatetimeIndex,
     profit_target: float,
     stop_loss: float,
-    vertical_barrier_timedelta: Optional[pd.Timedelta] = None,
-    side: Optional[pd.Series] = None,
+    vertical_barrier_timedelta: pd.Timedelta | None = None,
+    side: pd.Series | None = None,
 ) -> pd.DataFrame:
     """
     Triple-barrier labeling method for financial ML.
@@ -823,10 +816,10 @@ def get_events_triple_barrier(
     # Initialize output
     out = pd.DataFrame(index=events)
     # Use the same dtype as the close series index to avoid incompatible dtype warning
-    out['t1'] = pd.Series(pd.NaT, index=events, dtype=close.index.dtype)
-    out['label'] = 0
-    out['return'] = 0.0
-    out['barrier_touched'] = ''
+    out["t1"] = pd.Series(pd.NaT, index=events, dtype=close.index.dtype)
+    out["label"] = 0
+    out["return"] = 0.0
+    out["barrier_touched"] = ""
 
     for loc, t0 in enumerate(events):
         # Get future prices after event
@@ -848,11 +841,13 @@ def get_events_triple_barrier(
         returns = (df_future - entry_price) / entry_price
 
         # Adjust barriers based on side if provided
+        return_sign = 1.0
         if side is not None and t0 in side.index:
             position_side = side.loc[t0]
             # For short positions, flip the returns
             if position_side < 0:
                 returns = -returns
+                return_sign = -1.0
 
         # Find first touch of profit target
         profit_touch = returns[returns >= profit_target]
@@ -862,41 +857,42 @@ def get_events_triple_barrier(
         # Determine which barrier was touched first
         t1 = None
         label = 0
-        barrier = ''
+        barrier = ""
 
         if len(profit_touch) > 0 and len(stop_touch) > 0:
             # Both touched, use whichever came first
             if profit_touch.index[0] <= stop_touch.index[0]:
                 t1 = profit_touch.index[0]
                 label = 1
-                barrier = 'profit'
+                barrier = "profit"
             else:
                 t1 = stop_touch.index[0]
                 label = -1
-                barrier = 'stop'
+                barrier = "stop"
         elif len(profit_touch) > 0:
             t1 = profit_touch.index[0]
             label = 1
-            barrier = 'profit'
+            barrier = "profit"
         elif len(stop_touch) > 0:
             t1 = stop_touch.index[0]
             label = -1
-            barrier = 'stop'
+            barrier = "stop"
         else:
             # Vertical barrier (timeout)
             t1 = df_future.index[-1]
             final_return = returns.iloc[-1]
             label = 1 if final_return > 0 else -1
-            barrier = 'vertical'
+            barrier = "vertical"
 
         if t1 is not None:
-            out.loc[t0, 't1'] = t1
-            out.loc[t0, 'label'] = label
-            out.loc[t0, 'return'] = (close.loc[t1] - entry_price) / entry_price
-            out.loc[t0, 'barrier_touched'] = barrier
+            out.loc[t0, "t1"] = t1
+            out.loc[t0, "label"] = label
+            raw_return = (close.loc[t1] - entry_price) / entry_price
+            out.loc[t0, "return"] = raw_return * return_sign
+            out.loc[t0, "barrier_touched"] = barrier
 
     # Remove events where no barrier was touched
-    out = out[out['t1'].notna()]
+    out = out[out["t1"].notna()]
 
     return out
 
@@ -924,7 +920,7 @@ def get_bins_from_triple_barrier(
     # 1 = profitable (label == 1)
     # 0 = loss or neutral (label <= 0)
     bins = pd.Series(index=events.index, dtype=int)
-    bins[:] = (events['label'] > 0).astype(int)
+    bins[:] = (events["label"] > 0).astype(int)
 
     return bins
 
@@ -977,9 +973,10 @@ def get_meta_labels(
 
     meta_labels = pd.Series(index=events.index, dtype=int)
 
+    predictions = predictions.reindex(events.index)
     for idx in events.index:
-        target = events.loc[idx, 'target']
-        side = events.loc[idx, 'side']
+        target = events.loc[idx, "target"]
+        side = predictions.loc[idx]
 
         # If we predicted long (side=1) and target is positive, meta-label=1
         # If we predicted short (side=-1) and target is negative, meta-label=1

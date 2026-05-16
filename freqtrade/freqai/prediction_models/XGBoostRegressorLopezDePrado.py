@@ -44,8 +44,11 @@ class XGBoostRegressorLopezDePrado(BaseRegressionModel, LopezDePradoMixin):
             model = XGBRegressor(**self.model_training_parameters)
             model.set_params(callbacks=[TBCallback(dk.data_path)])
             model.fit(
-                X=X_train, y=y_train, sample_weight=w_train,
-                eval_set=[(X_val, y_val)], sample_weight_eval_set=[w_val],
+                X=X_train,
+                y=y_train,
+                sample_weight=w_train,
+                eval_set=[(X_val, y_val)],
+                sample_weight_eval_set=[w_val],
             )
             model.set_params(callbacks=[])
 
@@ -67,8 +70,11 @@ class XGBoostRegressorLopezDePrado(BaseRegressionModel, LopezDePradoMixin):
         model = XGBRegressor(**self.model_training_parameters)
         model.set_params(callbacks=[TBCallback(dk.data_path)])
         model.fit(
-            X=X, y=y, sample_weight=sample_weights,
-            eval_set=eval_set, sample_weight_eval_set=eval_weights,
+            X=X,
+            y=y,
+            sample_weight=sample_weights,
+            eval_set=eval_set,
+            sample_weight_eval_set=eval_weights,
             xgb_model=self.get_init_model(dk.pair),
         )
         model.set_params(callbacks=[])

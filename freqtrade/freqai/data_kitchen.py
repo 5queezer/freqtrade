@@ -424,24 +424,25 @@ class FreqaiDataKitchen:
         labels = [c for c in column_names if "&" in c]
         self.label_list = labels
 
-    def calculate_sample_weights(
-        self, dataframe: DataFrame, labels: DataFrame
-    ) -> npt.ArrayLike:
+    def calculate_sample_weights(self, dataframe: DataFrame, labels: DataFrame) -> npt.ArrayLike:
         """
         Calculate sample weights using Lopez de Prado methods or traditional decay.
         """
         feat_dict = self.freqai_config["feature_parameters"]
         num_samples = len(dataframe)
-        weights = np.ones(num_samples)
+        weights: npt.NDArray[np.float64] = np.ones(num_samples, dtype=np.float64)
 
         if feat_dict.get("weight_factor", 0) > 0:
-            weights = self.set_weights_higher_recent(num_samples)
+            weights = np.asarray(self.set_weights_higher_recent(num_samples), dtype=np.float64)
 
         if feat_dict.get("ldp_time_decay", 0) > 0:
             if isinstance(dataframe.index, pd.DatetimeIndex):
                 decay_factor = feat_dict.get("ldp_time_decay", 1.0)
-                weights = ldp.get_sample_weights_by_time_decay(
-                    dataframe.index.to_series(), decay_factor=decay_factor
+                weights = np.asarray(
+                    ldp.get_sample_weights_by_time_decay(
+                        dataframe.index.to_series(), decay_factor=decay_factor
+                    ),
+                    dtype=np.float64,
                 )
             else:
                 logger.warning("ldp_time_decay requires DatetimeIndex.")
@@ -449,9 +450,10 @@ class FreqaiDataKitchen:
         if feat_dict.get("ldp_sample_uniqueness", False):
             if isinstance(dataframe.index, pd.DatetimeIndex):
                 horizon_candles = feat_dict.get("label_horizon_candles", 10)
+                timeframe = self.config.get("timeframe", "5m")
+                horizon_seconds = horizon_candles * timeframe_to_seconds(timeframe)
                 close_times = pd.Series(
-                    dataframe.index + pd.Timedelta(hours=horizon_candles),
-                    index=dataframe.index
+                    dataframe.index + pd.Timedelta(seconds=horizon_seconds), index=dataframe.index
                 )
                 uniqueness_weights = ldp.get_sample_weights_by_uniqueness(close_times)
                 weights = weights * uniqueness_weights.values
@@ -491,16 +493,13 @@ class FreqaiDataKitchen:
                 timeframe = self.config.get("timeframe", "5m")
                 horizon_seconds = horizon_candles * timeframe_to_seconds(timeframe)
                 samples_info_sets = pd.Series(
-                    dataframe.index + pd.Timedelta(seconds=horizon_seconds),
-                    index=dataframe.index
+                    dataframe.index + pd.Timedelta(seconds=horizon_seconds), index=dataframe.index
                 )
             else:
                 logger.warning("Purging requires DatetimeIndex.")
 
         cv = ldp.PurgedKFold(
-            n_splits=n_splits,
-            samples_info_sets=samples_info_sets,
-            pct_embargo=pct_embargo
+            n_splits=n_splits, samples_info_sets=samples_info_sets, pct_embargo=pct_embargo
         )
 
         # Use the final fold as validation so training data remains chronologically
@@ -511,12 +510,13 @@ class FreqaiDataKitchen:
         test_features = dataframe.iloc[test_idx]
         train_labels = labels.iloc[train_idx]
         test_labels = labels.iloc[test_idx]
-        train_weights = weights[train_idx]
-        test_weights = weights[test_idx]
+        weights_array = np.asarray(weights)
+        train_weights = weights_array[train_idx]
+        test_weights = weights_array[test_idx]
 
         logger.info(
             f"Purged K-Fold: train={len(train_idx)}, test={len(test_idx)}, "
-            f"embargo={pct_embargo*100:.1f}%"
+            f"embargo={pct_embargo * 100:.1f}%"
         )
 
         return train_features, test_features, train_labels, test_labels, train_weights, test_weights
@@ -993,7 +993,8 @@ class FreqaiDataKitchen:
         compact for Frequi purposes.
         """
         to_keep = [
-            col for col in dataframe.columns
+            col
+            for col in dataframe.columns
             if not isinstance(col, str) or not col.startswith("%") or col.startswith("%%")
         ]
         return dataframe[to_keep]

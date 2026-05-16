@@ -134,6 +134,7 @@ class LopezDePradoEnsemble:
     def __init__(self, models: list):
         self.models = models
         self.classes_ = self._collect_classes(models)
+        self._label_encoder = None
 
     @staticmethod
     def _collect_classes(models):
@@ -182,6 +183,7 @@ class LopezDePradoEnsemble:
             aligned_probas.append(aligned)
 
         return np.mean(aligned_probas, axis=0)
+
 
 class MultiTargetEnsembleWrapper:
     """

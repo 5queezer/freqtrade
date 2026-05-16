@@ -45,9 +45,11 @@ class CatboostRegressorMultiTargetLopezDePrado(BaseRegressionModel, LopezDePrado
 
             for fold_idx, (train_idx, val_idx) in enumerate(cv.split(X), 1):
                 train_pool = Pool(
-                    X.iloc[train_idx], y_single.iloc[train_idx], sample_weight[train_idx]
+                    X.iloc[train_idx], y_single.iloc[train_idx], weight=sample_weight[train_idx]
                 )
-                val_pool = Pool(X.iloc[val_idx], y_single.iloc[val_idx], sample_weight[val_idx])
+                val_pool = Pool(
+                    X.iloc[val_idx], y_single.iloc[val_idx], weight=sample_weight[val_idx]
+                )
 
                 model = CatBoostRegressor(
                     allow_writing_files=True,
@@ -76,7 +78,7 @@ class CatboostRegressorMultiTargetLopezDePrado(BaseRegressionModel, LopezDePrado
                 eval_sets[i] = Pool(
                     data_dictionary["test_features"],
                     data_dictionary["test_labels"].iloc[:, i],
-                    data_dictionary["test_weights"],
+                    weight=data_dictionary["test_weights"],
                 )
 
         init_models = (

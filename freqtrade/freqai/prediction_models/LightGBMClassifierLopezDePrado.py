@@ -78,10 +78,12 @@ class LightGBMClassifierLopezDePrado(BaseClassifierModel, LopezDePradoMixin):
             eval_set = None
             test_weights = None
         else:
-            eval_set = [(
-                data_dictionary["test_features"].to_numpy(),
-                data_dictionary["test_labels"].to_numpy()[:, 0],
-            )]
+            eval_set = [
+                (
+                    data_dictionary["test_features"].to_numpy(),
+                    data_dictionary["test_labels"].to_numpy()[:, 0],
+                )
+            ]
             test_weights = data_dictionary["test_weights"]
 
         init_model = self.get_init_model(dk.pair)

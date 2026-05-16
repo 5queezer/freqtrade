@@ -45,7 +45,8 @@ class CatboostClassifierLopezDePrado(BaseClassifierModel, LopezDePradoMixin):
             )
 
             model = CatBoostClassifier(
-                allow_writing_files=True, loss_function="MultiClass",
+                allow_writing_files=True,
+                loss_function="MultiClass",
                 train_dir=Path(dk.data_path) / f"fold_{fold_idx}",
                 **self.model_training_parameters,
             )
@@ -70,8 +71,10 @@ class CatboostClassifierLopezDePrado(BaseClassifierModel, LopezDePradoMixin):
             )
 
         model = CatBoostClassifier(
-            allow_writing_files=True, loss_function="MultiClass",
-            train_dir=Path(dk.data_path), **self.model_training_parameters,
+            allow_writing_files=True,
+            loss_function="MultiClass",
+            train_dir=Path(dk.data_path),
+            **self.model_training_parameters,
         )
         model.fit(X=train_data, eval_set=test_data, init_model=self.get_init_model(dk.pair))
         return model

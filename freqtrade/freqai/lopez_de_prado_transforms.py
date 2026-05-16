@@ -5,9 +5,7 @@ These transformers are compatible with sklearn pipelines and datasieve.
 """
 
 import logging
-from typing import Optional
 
-import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -49,16 +47,11 @@ class FractionalDifferentiator(BaseEstimator, TransformerMixin):
     >>> X_transformed = pipe.fit_transform(X)
     """
 
-    def __init__(
-        self,
-        d: float = 0.5,
-        threshold: float = 0.01,
-        columns: Optional[list] = None
-    ):
+    def __init__(self, d: float = 0.5, threshold: float = 0.01, columns: list | None = None):
         self.d = d
         self.threshold = threshold
         self.columns = columns
-        self.feature_names_in_: Optional[list] = None
+        self.feature_names_in_: list | None = None
 
     def fit(self, X: pd.DataFrame, y=None):
         """
@@ -83,8 +76,7 @@ class FractionalDifferentiator(BaseEstimator, TransformerMixin):
             if self.columns is None:
                 # Apply to all numeric columns
                 self.columns_to_diff_ = [
-                    col for col in X.columns
-                    if pd.api.types.is_numeric_dtype(X[col])
+                    col for col in X.columns if pd.api.types.is_numeric_dtype(X[col])
                 ]
             else:
                 self.columns_to_diff_ = self.columns
@@ -109,6 +101,8 @@ class FractionalDifferentiator(BaseEstimator, TransformerMixin):
         """
         if not isinstance(X, pd.DataFrame):
             raise ValueError("FractionalDifferentiator requires pandas DataFrame input")
+        if not hasattr(self, "columns_to_diff_"):
+            raise ValueError("FractionalDifferentiator must be fitted before transform")
 
         X_transformed = X.copy()
 
@@ -119,11 +113,7 @@ class FractionalDifferentiator(BaseEstimator, TransformerMixin):
                     series = X_transformed[col]
 
                     # Apply fractional differentiation
-                    diff_series = frac_diff_ffd(
-                        series,
-                        d=self.d,
-                        threshold=self.threshold
-                    )
+                    diff_series = frac_diff_ffd(series, d=self.d, threshold=self.threshold)
 
                     # Handle NaN values at the beginning
                     # Fill with 0 or forward fill

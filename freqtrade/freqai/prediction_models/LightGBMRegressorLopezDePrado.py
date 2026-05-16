@@ -42,8 +42,11 @@ class LightGBMRegressorLopezDePrado(BaseRegressionModel, LopezDePradoMixin):
 
             model = LGBMRegressor(**self.model_training_parameters)
             model.fit(
-                X=X_train, y=y_train, sample_weight=w_train,
-                eval_set=[(X_val, y_val)], eval_sample_weight=[w_val],
+                X=X_train,
+                y=y_train,
+                sample_weight=w_train,
+                eval_set=[(X_val, y_val)],
+                eval_sample_weight=[w_val],
             )
 
             val_score = model.score(X_val, y_val, sample_weight=w_val)
@@ -63,7 +66,10 @@ class LightGBMRegressorLopezDePrado(BaseRegressionModel, LopezDePradoMixin):
 
         model = LGBMRegressor(**self.model_training_parameters)
         model.fit(
-            X=X, y=y, eval_set=eval_set, sample_weight=sample_weights,
+            X=X,
+            y=y,
+            eval_set=eval_set,
+            sample_weight=sample_weights,
             eval_sample_weight=[eval_weights] if eval_weights is not None else None,
             init_model=self.get_init_model(dk.pair),
         )

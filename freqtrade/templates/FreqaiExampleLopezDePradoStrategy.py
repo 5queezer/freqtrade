@@ -19,7 +19,7 @@ import talib.abstract as ta
 from pandas import DataFrame
 
 from freqtrade.freqai import lopez_de_prado as ldp
-from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
+from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,9 @@ class FreqaiExampleLopezDePradoStrategy(IStrategy):
     stop_loss_barrier = DecimalParameter(-0.05, -0.01, default=-0.02, space="buy", optimize=False)
     max_holding_hours = IntParameter(6, 72, default=24, space="buy", optimize=False)
 
-    def feature_engineering_expand_all(self, dataframe: DataFrame, period: int,
-                                        metadata: dict, **kwargs) -> DataFrame:
+    def feature_engineering_expand_all(
+        self, dataframe: DataFrame, period: int, metadata: dict, **kwargs
+    ) -> DataFrame:
         """
         Generate features at different periods.
         *Only functional with FreqAI enabled strategies*
@@ -73,14 +74,14 @@ class FreqaiExampleLopezDePradoStrategy(IStrategy):
         dataframe["%-bb_upperband-period"] = bollinger["upperband"]
 
         dataframe["%-bb_width-period"] = (
-            dataframe["%-bb_upperband-period"]
-            - dataframe["%-bb_lowerband-period"]
+            dataframe["%-bb_upperband-period"] - dataframe["%-bb_lowerband-period"]
         ) / dataframe["%-bb_middleband-period"]
 
         return dataframe
 
-    def feature_engineering_expand_basic(self, dataframe: DataFrame, metadata: dict,
-                                          **kwargs) -> DataFrame:
+    def feature_engineering_expand_basic(
+        self, dataframe: DataFrame, metadata: dict, **kwargs
+    ) -> DataFrame:
         """
         Generate basic features.
         *Only functional with FreqAI enabled strategies*
@@ -91,8 +92,9 @@ class FreqaiExampleLopezDePradoStrategy(IStrategy):
 
         return dataframe
 
-    def feature_engineering_standard(self, dataframe: DataFrame, metadata: dict,
-                                     **kwargs) -> DataFrame:
+    def feature_engineering_standard(
+        self, dataframe: DataFrame, metadata: dict, **kwargs
+    ) -> DataFrame:
         """
         Standard feature engineering without multi-period expansion.
         *Only functional with FreqAI enabled strategies*
@@ -116,7 +118,7 @@ class FreqaiExampleLopezDePradoStrategy(IStrategy):
         """
         # Get close prices as pandas Series with DatetimeIndex
         # IMPORTANT: Must use datetime index for triple-barrier calculation
-        close = pd.Series(dataframe['close'].values, index=dataframe['date'])
+        close = pd.Series(dataframe["close"].values, index=dataframe["date"])
 
         # Define events (potential trade entry points)
         # For this example, we'll use every candle as a potential entry
@@ -130,7 +132,7 @@ class FreqaiExampleLopezDePradoStrategy(IStrategy):
             profit_target=self.profit_target.value,
             stop_loss=self.stop_loss_barrier.value,
             vertical_barrier_timedelta=pd.Timedelta(hours=self.max_holding_hours.value),
-            side=None  # None = symmetric barriers for long/short
+            side=None,  # None = symmetric barriers for long/short
         )
 
         # Convert to binary classification labels
@@ -139,24 +141,24 @@ class FreqaiExampleLopezDePradoStrategy(IStrategy):
 
         # Align with dataframe index by matching datetime to integer index
         # Create mapping from datetime to integer index
-        date_to_idx = pd.Series(dataframe.index, index=dataframe['date'])
+        date_to_idx = pd.Series(dataframe.index, index=dataframe["date"])
 
-        dataframe['&-target'] = 0
+        dataframe["&-target"] = 0
         for dt_idx in labels.index:
             if dt_idx in date_to_idx.index:
                 int_idx = date_to_idx.loc[dt_idx]
-                dataframe.loc[int_idx, '&-target'] = labels.loc[dt_idx]
+                dataframe.loc[int_idx, "&-target"] = labels.loc[dt_idx]
 
         # Also store the actual return for reference (optional)
         # dataframe['&-return'] = 0.0
         # dataframe.loc[barriers.index, '&-return'] = barriers['return'].values
 
         # Store which barrier was touched (for analysis)
-        dataframe['barrier_type'] = ''
+        dataframe["barrier_type"] = ""
         for dt_idx in barriers.index:
             if dt_idx in date_to_idx.index:
                 int_idx = date_to_idx.loc[dt_idx]
-                dataframe.loc[int_idx, 'barrier_type'] = barriers.loc[dt_idx, 'barrier_touched']
+                dataframe.loc[int_idx, "barrier_type"] = barriers.loc[dt_idx, "barrier_touched"]
 
         logger.info(
             f"Triple-barrier labeling: "

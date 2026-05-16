@@ -541,19 +541,23 @@ class IFreqaiModel(ABC):
             frac_columns = ft_params.get("ldp_frac_diff_columns", None)
             logger.info(f"Fractional differentiation: d={frac_d}")
 
-            pipe_steps.append((
-                "frac_diff",
-                SKLearnWrapper(FractionalDifferentiator(
-                    d=frac_d,
-                    threshold=frac_threshold,
-                    columns=frac_columns
-                ))
-            ))
+            pipe_steps.append(
+                (
+                    "frac_diff",
+                    SKLearnWrapper(
+                        FractionalDifferentiator(
+                            d=frac_d, threshold=frac_threshold, columns=frac_columns
+                        )
+                    ),
+                )
+            )
 
-        pipe_steps.extend([
-            ("const", ds.VarianceThreshold(threshold=0)),
-            ("scaler", SKLearnWrapper(MinMaxScaler(feature_range=(-1, 1)))),
-        ])
+        pipe_steps.extend(
+            [
+                ("const", ds.VarianceThreshold(threshold=0)),
+                ("scaler", SKLearnWrapper(MinMaxScaler(feature_range=(-1, 1)))),
+            ]
+        )
 
         if ft_params.get("principal_component_analysis", False):
             pipe_steps.append(("pca", ds.PCA(n_components=0.999)))

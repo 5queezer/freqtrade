@@ -71,7 +71,8 @@ class CatboostRegressorLopezDePrado(BaseRegressionModel, LopezDePradoMixin):
 
         model = CatBoostRegressor(
             allow_writing_files=True,
-            train_dir=Path(dk.data_path), **self.model_training_parameters,
+            train_dir=Path(dk.data_path),
+            **self.model_training_parameters,
         )
         model.fit(X=train_data, eval_set=test_data, init_model=self.get_init_model(dk.pair))
         return model
