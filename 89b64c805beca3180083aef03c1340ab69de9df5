@@ -1,0 +1,17 @@
+problem: PR #10 had red CI and CodeRabbit findings on FreqAI Lopez de Prado changes
+approach: Reproduced pre-commit and targeted pytest failures, fixed mypy/ruff issues, addressed CodeRabbit findings for time-aware uniqueness horizons, fitted-state guards, PurgedKFold split bounds, timedelta Series/Index handling, fractional-diff threshold validation, side-adjusted returns, meta-label predictions, CatBoost Pool weights, and persisted XGBoost label encoder ordering
+failed_paths:
+  - Direct pytest initially blocked locally because tests/conftest.py imports xdist and this environment lacked xdist
+  - uv run pytest also lacked xdist and created uv.lock, which was removed before amend
+verification:
+  - python -m pre_commit run --show-diff-on-failure --color=never --all-files
+  - .venv/bin/python -m pytest tests/freqai/test_lopez_de_prado.py -q (47 passed, 1 skipped)
+  - python -m ruff check .
+  - python -m py_compile changed FreqAI/LDP files and tests
+workflow_learning: For CI red on this repo, run pre_commit all-files and targeted pytest with dev deps; targeted lint alone misses test dependency and pandas version edge cases
+related_files:
+  - freqtrade/freqai/lopez_de_prado.py
+  - freqtrade/freqai/data_kitchen.py
+  - freqtrade/freqai/lopez_de_prado_transforms.py
+  - freqtrade/freqai/prediction_models/*LopezDePrado.py
+  - tests/freqai/test_lopez_de_prado.py
