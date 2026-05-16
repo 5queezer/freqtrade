@@ -1,0 +1,11 @@
+problem: Close remaining Lopez de Prado purged CV constructor gap in ensemble training
+approach: Refactored purged CV construction to prefer explicit event end times (train_event_end_times/event_end_times/train_t1/t1), preserved config-driven n_splits/pct_embargo defaults, and added a focused constructor regression test
+failed_paths:
+  - pytest target blocked locally because tests/conftest.py requires xdist
+verification:
+  - python -m py_compile freqtrade/freqai/lopez_de_prado_ensemble.py tests/freqai/test_lopez_de_prado.py
+  - standalone python assertion script covering configured PurgedKFold kwargs and shuffled-date rejection
+workflow_learning: When purged CV depends on event horizons, prefer explicit event end timestamps over reconstructing them from candle spacing when available
+related_files:
+  - freqtrade/freqai/lopez_de_prado_ensemble.py
+  - tests/freqai/test_lopez_de_prado.py
