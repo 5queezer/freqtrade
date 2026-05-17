@@ -1,0 +1,778 @@
+"""
+Unit tests for Lopez de Prado utilities in FreqAI
+"""
+
+from datetime import timedelta
+
+import numpy as np
+import pandas as pd
+import pytest
+from sklearn.preprocessing import LabelEncoder
+
+from freqtrade.freqai.lopez_de_prado import (
+    CombinatorialPurgedKFold,
+    PurgedKFold,
+    frac_diff_ffd,
+    get_bins_from_triple_barrier,
+    get_events_triple_barrier,
+    get_meta_labels,
+    get_num_concurrent_labels,
+    get_optimal_frac_diff_order,
+    get_sample_weights_by_returns,
+    get_sample_weights_by_time_decay,
+    get_sample_weights_by_uniqueness,
+    seq_bootstrap,
+)
+from freqtrade.freqai.lopez_de_prado_transforms import FractionalDifferentiator
+
+
+class TestPurgedKFold:
+    """Test Purged K-Fold Cross-Validation."""
+
+    def test_basic_split(self):
+        dates = pd.date_range("2020-01-01", periods=100, freq="D")
+        X = pd.DataFrame(
+            {"feature1": np.random.randn(100), "feature2": np.random.randn(100)}, index=dates
+        )
+        cv = PurgedKFold(n_splits=5, pct_embargo=0.01)
+        splits = list(cv.split(X))
+
+        assert len(splits) == 5
+        for train_idx, test_idx in splits:
+            assert len(train_idx) > 0
+            assert len(test_idx) > 0
+            assert len(set(train_idx) & set(test_idx)) == 0
+
+    def test_embargo_period(self):
+        dates = pd.date_range("2020-01-01", periods=100, freq="D")
+        X = pd.DataFrame({"feat": np.random.randn(100)}, index=dates)
+        cv = PurgedKFold(n_splits=3, pct_embargo=0.10)
+
+        for train_idx, test_idx in cv.split(X):
+            test_end = test_idx.max()
+            train_after_test = train_idx[train_idx > test_end]
+            if len(train_after_test) > 0:
+                gap = train_after_test.min() - test_end
+                expected_gap = int(0.10 * len(X))
+                assert gap >= expected_gap - 2
+
+    def test_purging_with_overlapping_labels(self):
+        dates = pd.date_range("2020-01-01", periods=50, freq="D")
+        X = pd.DataFrame({"feat": np.random.randn(50)}, index=dates)
+        close_times = pd.Series([date + timedelta(days=5) for date in dates], index=dates)
+
+        cv = PurgedKFold(n_splits=5, samples_info_sets=close_times, pct_embargo=0.01)
+
+        for train_idx, test_idx in cv.split(X):
+            train_times = close_times.iloc[train_idx]
+            test_times = close_times.iloc[test_idx]
+            test_min = test_times.index.min()
+            test_max = test_times.max()
+            overlapping_train = train_times[
+                (train_times.index >= test_min) & (train_times.index <= test_max)
+            ]
+            assert len(overlapping_train) == 0 or len(overlapping_train) < len(test_idx) * 0.1
+
+    def test_purging_removes_train_labels_overlapping_test_start(self):
+        dates = pd.date_range("2020-01-01", periods=30, freq="D")
+        X = pd.DataFrame({"feat": np.arange(30)}, index=dates)
+        close_times = pd.Series([date + timedelta(days=15) for date in dates], index=dates)
+        cv = PurgedKFold(n_splits=3, samples_info_sets=close_times, pct_embargo=0.0)
+
+        for train_idx, test_idx in cv.split(X):
+            test_start = close_times.index[test_idx].min()
+            test_end = close_times.iloc[test_idx].max()
+            train_starts = close_times.index[train_idx]
+            train_ends = close_times.iloc[train_idx]
+
+            overlaps = (train_starts <= test_end) & (train_ends >= test_start)
+            assert not overlaps.any()
+
+    def test_get_n_splits(self):
+        cv = PurgedKFold(n_splits=7)
+        assert cv.get_n_splits() == 7
+
+    def test_invalid_params(self):
+        with pytest.raises(ValueError):
+            PurgedKFold(n_splits=1)
+
+    def test_n_splits_cannot_exceed_samples(self):
+        dates = pd.date_range("2020-01-01", periods=2, freq="D")
+        X = pd.DataFrame({"feat": [1, 2]}, index=dates)
+        cv = PurgedKFold(n_splits=3)
+
+        with pytest.raises(ValueError, match="cannot exceed number of samples"):
+            list(cv.split(X))
+
+
+class TestCombinatorialPurgedKFold:
+    """Test Combinatorial Purged K-Fold Cross-Validation."""
+
+    def test_number_of_splits(self):
+        dates = pd.date_range("2020-01-01", periods=100, freq="D")
+        X = pd.DataFrame({"feat": np.random.randn(100)}, index=dates)
+        cv = CombinatorialPurgedKFold(n_splits=6, n_test_splits=2)
+
+        splits = list(cv.split(X))
+        assert len(splits) == 15
+        assert cv.get_n_splits() == 15
+
+    def test_splits_are_different(self):
+        dates = pd.date_range("2020-01-01", periods=100, freq="D")
+        X = pd.DataFrame({"feat": np.random.randn(100)}, index=dates)
+        cv = CombinatorialPurgedKFold(n_splits=5, n_test_splits=2)
+
+        splits = list(cv.split(X))
+        test_sets = [tuple(sorted(test_idx)) for _, test_idx in splits]
+        assert len(test_sets) == len(set(test_sets))
+
+    def test_invalid_params(self):
+        with pytest.raises(ValueError):
+            CombinatorialPurgedKFold(n_splits=2)
+        with pytest.raises(ValueError):
+            CombinatorialPurgedKFold(n_splits=5, n_test_splits=5)
+
+
+class TestSampleWeights:
+    """Test sample weighting functions."""
+
+    def test_time_decay_weights(self):
+        dates = pd.date_range("2020-01-01", periods=100, freq="D")
+        weights = get_sample_weights_by_time_decay(dates, decay_factor=1.0)
+
+        assert np.isclose(weights.sum(), 1.0)
+        assert weights[-1] > weights[0]
+        assert np.all(weights > 0)
+
+    def test_uniform_weights_when_no_decay(self):
+        dates = pd.date_range("2020-01-01", periods=100, freq="D")
+        weights = get_sample_weights_by_time_decay(dates, decay_factor=0.0)
+
+        assert np.allclose(weights, weights[0])
+        assert np.isclose(weights.sum(), 1.0)
+
+    def test_return_based_weights(self):
+        returns = pd.Series(
+            np.concatenate(
+                [
+                    np.random.randn(50) * 0.01,
+                    np.random.randn(50) * 0.05,
+                ]
+            )
+        )
+        weights = get_sample_weights_by_returns(returns, span=10)
+
+        assert np.isclose(weights.sum(), 1.0)
+        assert np.all(weights > 0)
+
+    def test_uniqueness_weights(self):
+        dates = pd.date_range("2020-01-01", periods=20, freq="D")
+        close_times = pd.Series(index=dates, dtype="datetime64[ns]")
+        for i, date in enumerate(dates):
+            close_times.iloc[i] = date + timedelta(days=1 if i < 10 else 5)
+
+        weights = get_sample_weights_by_uniqueness(close_times)
+
+        assert np.isclose(weights.sum(), 1.0)
+        assert np.all(weights > 0)
+        assert weights.iloc[:10].mean() > weights.iloc[10:].mean()
+
+    def test_concurrent_labels(self):
+        dates = pd.date_range("2020-01-01", periods=10, freq="D")
+        close_times = pd.Series([date + timedelta(days=3) for date in dates], index=dates)
+        concurrent = get_num_concurrent_labels(close_times)
+
+        assert np.all(concurrent > 0)
+        assert concurrent.iloc[5] >= concurrent.iloc[0]
+
+
+class TestSequentialBootstrap:
+    """Test Sequential Bootstrap."""
+
+    def test_bootstrap_size(self):
+        X = pd.DataFrame(
+            np.random.randn(100, 5), index=pd.date_range("2020-01-01", periods=100, freq="D")
+        )
+        indices = seq_bootstrap(X, n_samples=50, random_state=42)
+
+        assert len(indices) == 50
+        assert np.all(indices >= 0)
+        assert np.all(indices < len(X))
+
+    def test_bootstrap_respects_weights(self):
+        X = pd.DataFrame(
+            np.random.randn(100, 5), index=pd.date_range("2020-01-01", periods=100, freq="D")
+        )
+        weights = pd.Series(0.01, index=X.index)
+        weights.iloc[:10] = 10.0
+        weights = weights / weights.sum()
+
+        indices = seq_bootstrap(X, sample_weights=weights, n_samples=1000, random_state=42)
+        first_10_count = np.sum(indices < 10)
+        assert first_10_count > 100
+
+    def test_bootstrap_reproducibility(self):
+        X = pd.DataFrame(
+            np.random.randn(50, 3), index=pd.date_range("2020-01-01", periods=50, freq="D")
+        )
+        indices1 = seq_bootstrap(X, n_samples=30, random_state=42)
+        indices2 = seq_bootstrap(X, n_samples=30, random_state=42)
+        assert np.array_equal(indices1, indices2)
+
+
+class TestFractionalDifferentiation:
+    """Test Fractional Differentiation."""
+
+    def test_frac_diff_basic(self):
+        series = pd.Series(np.log(np.arange(1, 101, dtype=float)))
+        diff_series = frac_diff_ffd(series, d=0.5, threshold=0.01)
+
+        assert len(diff_series) < len(series)
+        assert diff_series.notna().sum() > 0
+
+    def test_frac_diff_d_equals_zero(self):
+        series = pd.Series(np.random.randn(100))
+        diff_series = frac_diff_ffd(series, d=0.0, threshold=0.01)
+
+        common_idx = diff_series.index
+        assert np.allclose(
+            diff_series.loc[common_idx].values, series.loc[common_idx].values, rtol=0.1
+        )
+
+    def test_frac_diff_d_equals_one(self):
+        series = pd.Series(np.random.randn(100).cumsum())
+        frac_diff = frac_diff_ffd(series, d=1.0, threshold=0.01)
+        regular_diff = series.diff()
+
+        common_idx = frac_diff.index
+        correlation = np.corrcoef(
+            frac_diff.loc[common_idx].values,
+            regular_diff.loc[common_idx].dropna().values[: len(frac_diff)],
+        )[0, 1]
+        assert correlation > 0.9
+
+    def test_frac_diff_stationarity(self):
+        np.random.seed(42)
+        series = pd.Series(np.random.randn(200).cumsum())
+        diff_series = frac_diff_ffd(series, d=0.5, threshold=0.01)
+
+        if len(diff_series) > 1:
+            assert diff_series.std() != series.std()
+
+    def test_frac_diff_rejects_non_positive_threshold(self):
+        series = pd.Series(np.random.randn(20))
+
+        with pytest.raises(ValueError, match="positive finite"):
+            frac_diff_ffd(series, d=0.5, threshold=0)
+
+    def test_fractional_differentiator_requires_fit_before_transform(self):
+        transformer = FractionalDifferentiator()
+
+        with pytest.raises(ValueError, match="must be fitted before transform"):
+            transformer.transform(pd.DataFrame({"x": [1.0, 2.0, 3.0]}))
+
+    def test_fractional_differentiator_accepts_ndarray_from_datasieve_wrapper(self):
+        transformer = FractionalDifferentiator(d=0.5, threshold=0.5)
+        features = np.array(
+            [
+                [1.0, 10.0],
+                [2.0, 11.0],
+                [3.0, 13.0],
+                [5.0, 16.0],
+            ]
+        )
+
+        transformed = transformer.fit(features).transform(features)
+
+        assert isinstance(transformed, np.ndarray)
+        assert transformed.shape == features.shape
+        assert np.all(np.isfinite(transformed))
+
+
+class TestTripleBarrier:
+    """Test triple-barrier labeling."""
+
+    def test_triple_barrier_profit(self):
+        dates = pd.date_range("2024-01-01", periods=100, freq="1h")
+        prices = pd.Series([100] + [100 + i * 0.5 for i in range(1, 100)], index=dates)
+        events = pd.DatetimeIndex([dates[0]])
+
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.03,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=50),
+        )
+
+        assert len(barriers) == 1
+        assert barriers.iloc[0]["label"] == 1
+        assert barriers.iloc[0]["barrier_touched"] == "profit"
+
+    def test_triple_barrier_stop_loss(self):
+        dates = pd.date_range("2024-01-01", periods=100, freq="1h")
+        prices = pd.Series(np.linspace(100, 95, 100), index=dates)
+        events = pd.DatetimeIndex([dates[0]])
+
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.03,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=50),
+        )
+
+        assert len(barriers) == 1
+        assert barriers.iloc[0]["label"] == -1
+        assert barriers.iloc[0]["barrier_touched"] == "stop"
+
+    def test_triple_barrier_vertical(self):
+        dates = pd.date_range("2024-01-01", periods=50, freq="1h")
+        prices = pd.Series(100 + np.random.randn(50) * 0.1, index=dates)
+        events = pd.DatetimeIndex([dates[0]])
+
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.10,
+            stop_loss=-0.10,
+            vertical_barrier_timedelta=pd.Timedelta(hours=20),
+        )
+
+        assert len(barriers) == 1
+        assert barriers.iloc[0]["barrier_touched"] == "vertical"
+        assert barriers.iloc[0]["label"] in [-1, 1]
+
+    def test_triple_barrier_multiple_events(self):
+        dates = pd.date_range("2024-01-01", periods=200, freq="1h")
+        prices = pd.Series(100 + np.cumsum(np.random.randn(200) * 0.5), index=dates)
+        events = pd.DatetimeIndex(dates[::20])
+
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.02,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=10),
+        )
+
+        assert len(barriers) >= len(events) * 0.8
+        assert barriers["label"].isin([-1, 1]).all()
+        assert barriers["barrier_touched"].isin(["profit", "stop", "vertical"]).all()
+
+    def test_triple_barrier_with_side(self):
+        dates = pd.date_range("2024-01-01", periods=100, freq="1h")
+        prices = pd.Series(np.linspace(100, 105, 100), index=dates)
+        events = pd.DatetimeIndex([dates[0], dates[50]])
+        side = pd.Series([1, -1], index=events)
+
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.03,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=30),
+            side=side,
+        )
+
+        assert len(barriers) == 2
+        assert barriers.iloc[0]["label"] == 1
+        assert barriers.iloc[1]["label"] == -1
+
+    def test_short_side_return_is_side_adjusted(self):
+        dates = pd.date_range("2024-01-01", periods=10, freq="1h")
+        prices = pd.Series([100, 98, 97, 96, 95, 94, 93, 92, 91, 90], index=dates)
+        events = pd.DatetimeIndex([dates[0]])
+        side = pd.Series([-1], index=events)
+
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.02,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=5),
+            side=side,
+        )
+
+        assert barriers.iloc[0]["label"] == 1
+        assert barriers.iloc[0]["return"] > 0
+
+    def test_bins_from_triple_barrier(self):
+        dates = pd.date_range("2024-01-01", periods=10, freq="1h")
+        prices = pd.Series([100, 102, 101, 103, 102, 104, 103, 105, 104, 106], index=dates)
+        events = pd.DatetimeIndex([dates[0], dates[2], dates[4]])
+
+        barriers = get_events_triple_barrier(
+            close=prices,
+            events=events,
+            profit_target=0.02,
+            stop_loss=-0.02,
+            vertical_barrier_timedelta=pd.Timedelta(hours=3),
+        )
+
+        bins = get_bins_from_triple_barrier(barriers, prices)
+
+        assert bins.isin([0, 1]).all()
+        assert len(bins) == len(barriers)
+
+
+class TestMetaLabeling:
+    """Test Meta-Labeling."""
+
+    def test_meta_labels_basic(self):
+        events = pd.DataFrame(
+            {
+                "target": [0.05, -0.03, 0.02, -0.01, 0.04],
+                "side": [1, -1, 1, 1, -1],
+            }
+        )
+        predictions = pd.Series([1, -1, 1, 1, -1], index=events.index)
+        meta_labels = get_meta_labels(events, predictions)
+
+        assert meta_labels.iloc[0] == 1
+        assert meta_labels.iloc[1] == 1
+        assert meta_labels.iloc[2] == 1
+        assert meta_labels.iloc[3] == 0
+        assert meta_labels.iloc[4] == 0
+
+    def test_meta_labels_all_correct(self):
+        events = pd.DataFrame({"target": [0.05, -0.03, 0.02], "side": [1, -1, 1]})
+        predictions = pd.Series([1, -1, 1], index=events.index)
+        meta_labels = get_meta_labels(events, predictions)
+
+        assert np.all(meta_labels == 1)
+
+    def test_meta_labels_all_wrong(self):
+        events = pd.DataFrame({"target": [0.05, -0.03, 0.02], "side": [-1, 1, -1]})
+        predictions = pd.Series([-1, 1, -1], index=events.index)
+        meta_labels = get_meta_labels(events, predictions)
+
+        assert np.all(meta_labels == 0)
+
+    def test_meta_labels_use_predictions_argument(self):
+        events = pd.DataFrame({"target": [0.05], "side": [-1]})
+        predictions = pd.Series([1], index=events.index)
+
+        meta_labels = get_meta_labels(events, predictions)
+
+        assert meta_labels.iloc[0] == 1
+
+
+class TestOptimalFracDiff:
+    """Test optimal fractional differentiation order finding."""
+
+    def test_optimal_d_for_stationary_series(self):
+        series = pd.Series(np.random.randn(200))
+        optimal_d = get_optimal_frac_diff_order(series, max_d=1.0, step=0.1)
+        assert optimal_d <= 0.3 or optimal_d == 0.5
+
+    def test_optimal_d_for_nonstationary_series(self):
+        series = pd.Series(np.random.randn(200).cumsum())
+        optimal_d = get_optimal_frac_diff_order(series, max_d=1.0, step=0.1)
+        assert optimal_d >= 0.3
+
+
+class _ConstantRegressor:
+    def __init__(self, value):
+        self.value = value
+
+    def predict(self, X):
+        return np.full(len(X), self.value, dtype=float)
+
+
+class _StringClassifier:
+    classes_ = np.array(["down", "up"])
+
+    def __init__(self, proba, classes=None):
+        self.proba = np.asarray(proba, dtype=float)
+        if classes is not None:
+            self.classes_ = np.asarray(classes)
+
+    def predict(self, X):
+        return self.classes_[np.argmax(self.predict_proba(X), axis=1)]
+
+    def predict_proba(self, X):
+        return np.tile(self.proba, (len(X), 1))
+
+
+class _VoteOnlyClassifier:
+    classes_ = np.array(["down", "up"])
+
+    def __init__(self, label):
+        self.label = label
+
+    def predict(self, X):
+        return np.full(len(X), self.label, dtype=object)
+
+
+class TestXGBoostClassifierLopezDePrado:
+    """Test Lopez de Prado XGBoost classifier compatibility."""
+
+    def test_predict_uses_persisted_label_encoder_order(self, monkeypatch):
+        pytest.importorskip("xgboost")
+        from freqtrade.freqai.base_models.BaseClassifierModel import BaseClassifierModel
+        from freqtrade.freqai.prediction_models.XGBoostClassifierLopezDePrado import (
+            XGBoostClassifierLopezDePrado,
+        )
+
+        def _base_predict(self, unfiltered_df, dk, **kwargs):
+            return pd.DataFrame({"&target": [1, 0], 0: [0.2, 0.8], 1: [0.8, 0.2]}), np.ones(2)
+
+        monkeypatch.setattr(BaseClassifierModel, "predict", _base_predict)
+
+        label_encoder = LabelEncoder().fit(["up", "down"])
+        model = XGBoostClassifierLopezDePrado.__new__(XGBoostClassifierLopezDePrado)
+        model.model = type("EncodedModel", (), {"_label_encoder": label_encoder})()
+        dk = type(
+            "DK",
+            (),
+            {
+                "label_list": ["&target"],
+                "data": {"labels_std": {"up": 1.0, "down": 1.0}},
+            },
+        )()
+
+        pred_df, do_predict = model.predict(pd.DataFrame(), dk)
+
+        assert pred_df["&target"].tolist() == ["up", "down"]
+        assert {"down", "up"}.issubset(pred_df.columns)
+        assert np.all(do_predict == 1)
+
+
+class TestLopezDePradoEnsemble:
+    """Test Lopez de Prado ensemble wrapper."""
+
+    def test_ensemble_predict(self):
+        from sklearn.ensemble import RandomForestClassifier
+
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X_train = np.random.randn(100, 5)
+        y_train = np.random.randint(0, 2, 100)
+        X_test = np.random.randn(20, 5)
+
+        models = []
+        for _ in range(3):
+            model = RandomForestClassifier(n_estimators=10, random_state=42)
+            model.fit(X_train, y_train)
+            models.append(model)
+
+        ensemble = LopezDePradoEnsemble(models)
+        predictions = ensemble.predict(X_test)
+
+        assert len(predictions) == len(X_test)
+        assert np.all(np.isin(predictions, [0, 1]))
+
+    def test_ensemble_predict_proba(self):
+        from sklearn.ensemble import RandomForestClassifier
+
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X_train = np.random.randn(100, 5)
+        y_train = np.random.randint(0, 2, 100)
+        X_test = np.random.randn(20, 5)
+
+        models = []
+        for _ in range(3):
+            model = RandomForestClassifier(n_estimators=10, random_state=42)
+            model.fit(X_train, y_train)
+            models.append(model)
+
+        ensemble = LopezDePradoEnsemble(models)
+        probas = ensemble.predict_proba(X_test)
+
+        assert probas.shape == (len(X_test), 2)
+        assert np.allclose(probas.sum(axis=1), 1.0)
+        assert np.all(probas >= 0) and np.all(probas <= 1)
+
+    def test_regressor_ensemble_preserves_continuous_predictions(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X = np.zeros((4, 2))
+        ensemble = LopezDePradoEnsemble([_ConstantRegressor(0.2), _ConstantRegressor(0.7)])
+
+        predictions = ensemble.predict(X)
+
+        assert predictions.dtype.kind == "f"
+        assert np.allclose(predictions, 0.45)
+
+    def test_classifier_ensemble_uses_probability_average_with_string_labels(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X = np.zeros((3, 2))
+        ensemble = LopezDePradoEnsemble(
+            [
+                _StringClassifier([0.8, 0.2]),
+                _StringClassifier([0.1, 0.9]),
+                _StringClassifier([0.2, 0.8]),
+            ]
+        )
+
+        assert np.all(ensemble.predict(X) == "up")
+
+    def test_classifier_ensemble_majority_votes_string_labels_without_proba(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X = np.zeros((3, 2))
+        ensemble = LopezDePradoEnsemble(
+            [
+                _VoteOnlyClassifier("down"),
+                _VoteOnlyClassifier("up"),
+                _VoteOnlyClassifier("up"),
+            ]
+        )
+
+        assert np.all(ensemble.predict(X) == "up")
+
+    def test_classifier_ensemble_aligns_probability_columns_by_class_label(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoEnsemble
+
+        X = np.zeros((2, 2))
+        ensemble = LopezDePradoEnsemble(
+            [
+                _StringClassifier([0.9, 0.1], classes=["down", "up"]),
+                _StringClassifier([0.8, 0.2], classes=["up", "down"]),
+                _StringClassifier([1.0], classes=["up"]),
+            ]
+        )
+
+        probas = ensemble.predict_proba(X)
+
+        assert list(ensemble.classes_) == ["down", "up"]
+        assert np.allclose(probas[:, 0], (0.9 + 0.2 + 0.0) / 3)
+        assert np.allclose(probas[:, 1], (0.1 + 0.8 + 1.0) / 3)
+        assert np.all(ensemble.predict(X) == "up")
+
+    def test_purged_cv_uses_configured_constructor_with_explicit_event_end_times(self, monkeypatch):
+        import freqtrade.freqai.lopez_de_prado_ensemble as ensemble_module
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
+
+        captured = {}
+
+        class _PurgedKFold:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        class _Model(LopezDePradoMixin):
+            freqai_info = {
+                "feature_parameters": {
+                    "use_purged_kfold_cv": True,
+                    "purged_cv_n_splits": 4,
+                    "purged_cv_embargo_pct": 0.03,
+                    "label_horizon_candles": 1,
+                }
+            }
+
+        train_dates = pd.Series(pd.date_range("2024-01-01", periods=4, freq="1h"))
+        event_end_times = pd.Series(
+            pd.date_range("2024-01-01 02:00:00", periods=4, freq="1h"),
+            index=pd.DatetimeIndex(train_dates),
+        )
+        dk = type(
+            "DK",
+            (),
+            {
+                "data_dictionary": {
+                    "train_dates": train_dates,
+                    "train_event_end_times": event_end_times,
+                }
+            },
+        )()
+
+        monkeypatch.setattr(ensemble_module, "PurgedKFold", _PurgedKFold)
+
+        _Model()._get_purged_cv(dk, _Model()._get_ldp_config(), X=np.zeros((4, 2)))
+
+        assert captured["n_splits"] == 4
+        assert captured["pct_embargo"] == 0.03
+        pd.testing.assert_series_equal(captured["samples_info_sets"], event_end_times)
+
+    def test_purged_cv_prefers_current_fit_event_end_times(self, monkeypatch):
+        import freqtrade.freqai.lopez_de_prado_ensemble as ensemble_module
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
+
+        captured = {}
+
+        class _PurgedKFold:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        class _Model(LopezDePradoMixin):
+            freqai_info = {
+                "feature_parameters": {
+                    "use_purged_kfold_cv": True,
+                    "purged_cv_n_splits": 3,
+                    "purged_cv_embargo_pct": 0.01,
+                    "label_horizon_candles": 1,
+                }
+            }
+
+        train_dates = pd.Series(pd.date_range("2024-01-01", periods=4, freq="1h"))
+        stale_event_end_times = pd.Series(
+            pd.date_range("2024-01-01 01:00:00", periods=4, freq="1h"),
+            index=pd.DatetimeIndex(train_dates),
+        )
+        current_event_end_times = pd.Series(
+            pd.date_range("2024-01-01 03:00:00", periods=4, freq="1h"),
+            index=pd.DatetimeIndex(train_dates),
+        )
+        dk = type(
+            "DK",
+            (),
+            {
+                "data_dictionary": {
+                    "train_dates": train_dates,
+                    "train_event_end_times": stale_event_end_times,
+                }
+            },
+        )()
+        data_dictionary = {
+            "train_dates": train_dates,
+            "train_event_end_times": current_event_end_times,
+        }
+
+        monkeypatch.setattr(ensemble_module, "PurgedKFold", _PurgedKFold)
+
+        _Model()._get_purged_cv(
+            dk, _Model()._get_ldp_config(), X=np.zeros((4, 2)), data_dictionary=data_dictionary
+        )
+
+        pd.testing.assert_series_equal(captured["samples_info_sets"], current_event_end_times)
+
+    def test_purged_cv_rejects_event_end_times_before_train_dates(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
+
+        class _Model(LopezDePradoMixin):
+            freqai_info = {"feature_parameters": {"label_horizon_candles": 1}}
+
+        train_dates = pd.Series(pd.date_range("2024-01-01", periods=4, freq="1h"))
+        event_end_times = pd.Series(
+            pd.date_range("2023-12-31 23:00:00", periods=4, freq="1h"),
+            index=pd.DatetimeIndex(train_dates),
+        )
+        dk = type(
+            "DK",
+            (),
+            {
+                "data_dictionary": {
+                    "train_dates": train_dates,
+                    "train_event_end_times": event_end_times,
+                }
+            },
+        )()
+
+        with pytest.raises(ValueError, match="must not be earlier than train_dates"):
+            _Model()._get_purged_cv(dk, _Model()._get_ldp_config(), X=np.zeros((4, 2)))
+
+    def test_purged_cv_rejects_shuffled_train_dates(self):
+        from freqtrade.freqai.lopez_de_prado_ensemble import LopezDePradoMixin
+
+        class _Model(LopezDePradoMixin):
+            freqai_info = {"feature_parameters": {"label_horizon_candles": 1}}
+
+        dates = pd.Series(pd.date_range("2024-01-01", periods=4, freq="1h"))
+        shuffled_dates = dates.iloc[[0, 2, 1, 3]].reset_index(drop=True)
+        dk = type("DK", (), {"data_dictionary": {"train_dates": shuffled_dates}})()
+
+        with pytest.raises(ValueError, match="chronologically ordered"):
+            _Model()._get_purged_cv(dk, _Model()._get_ldp_config(), X=np.zeros((4, 2)))

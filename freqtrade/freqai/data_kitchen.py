@@ -20,6 +20,7 @@ from freqtrade.constants import DOCS_LINK, ORDERFLOW_ADDED_COLUMNS, Config
 from freqtrade.data.converter import reduce_dataframe_footprint
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import timeframe_to_seconds
+from freqtrade.freqai import lopez_de_prado as ldp
 from freqtrade.strategy import merge_informative_pair
 from freqtrade.strategy.interface import IStrategy
 
@@ -127,24 +128,26 @@ class FreqaiDataKitchen:
         self, filtered_dataframe: DataFrame, labels: DataFrame
     ) -> dict[Any, Any]:
         """
-        Given the dataframe for the full history for training, split the data into
-        training and test data according to user specified parameters in configuration
-        file.
-        :param filtered_dataframe: cleaned dataframe ready to be split.
-        :param labels: cleaned labels ready to be split.
+        Split data into training and test sets using standard or Purged K-Fold CV.
         """
         feat_dict = self.freqai_config["feature_parameters"]
 
         if "shuffle" not in self.freqai_config["data_split_parameters"]:
             self.freqai_config["data_split_parameters"].update({"shuffle": False})
 
-        weights: npt.ArrayLike
-        if feat_dict.get("weight_factor", 0) > 0:
-            weights = self.set_weights_higher_recent(len(filtered_dataframe))
-        else:
-            weights = np.ones(len(filtered_dataframe))
+        weights = self.calculate_sample_weights(filtered_dataframe, labels)
+        use_purged_cv = feat_dict.get("use_purged_kfold_cv", False)
 
-        if self.freqai_config.get("data_split_parameters", {}).get("test_size", 0.1) != 0:
+        if use_purged_cv:
+            (
+                train_features,
+                test_features,
+                train_labels,
+                test_labels,
+                train_weights,
+                test_weights,
+            ) = self._split_with_purged_kfold(filtered_dataframe, labels, weights)
+        elif self.freqai_config.get("data_split_parameters", {}).get("test_size", 0.1) != 0:
             (
                 train_features,
                 test_features,
@@ -166,7 +169,12 @@ class FreqaiDataKitchen:
             train_labels = labels
             train_weights = weights
 
-        if feat_dict["shuffle_after_split"]:
+        if feat_dict["shuffle_after_split"] and use_purged_cv:
+            logger.warning(
+                "Ignoring shuffle_after_split because Purged K-Fold CV requires "
+                "chronologically ordered, timestamp-aligned training rows."
+            )
+        elif feat_dict["shuffle_after_split"]:
             rint1 = random.randint(0, 100)
             rint2 = random.randint(0, 100)
             train_features = train_features.sample(frac=1, random_state=rint1).reset_index(
@@ -303,6 +311,10 @@ class FreqaiDataKitchen:
         train_weights: Any,
         test_weights: Any,
     ) -> dict:
+        train_dates = self.train_dates
+        if len(train_dates) > 0:
+            train_dates = pd.Series(train_dates).loc[train_df.index]
+
         self.data_dictionary = {
             "train_features": train_df,
             "test_features": test_df,
@@ -310,7 +322,7 @@ class FreqaiDataKitchen:
             "test_labels": test_labels,
             "train_weights": train_weights,
             "test_weights": test_weights,
-            "train_dates": self.train_dates,
+            "train_dates": train_dates,
         }
 
         return self.data_dictionary
@@ -330,6 +342,10 @@ class FreqaiDataKitchen:
         if not isinstance(train_split, int) or train_split < 1:
             raise OperationalException(
                 f"train_period_days must be an integer greater than 0. Got {train_split}."
+            )
+        if not isinstance(bt_split, (int, float)) or bt_split <= 0:
+            raise OperationalException(
+                f"backtest_period_days must be a positive number. Got {bt_split}."
             )
         train_period_days = train_split * SECONDS_IN_DAY
         bt_period = bt_split * SECONDS_IN_DAY
@@ -408,14 +424,102 @@ class FreqaiDataKitchen:
         labels = [c for c in column_names if "&" in c]
         self.label_list = labels
 
+    def calculate_sample_weights(self, dataframe: DataFrame, labels: DataFrame) -> npt.ArrayLike:
+        """
+        Calculate sample weights using Lopez de Prado methods or traditional decay.
+        """
+        feat_dict = self.freqai_config["feature_parameters"]
+        num_samples = len(dataframe)
+        weights: npt.NDArray[np.float64] = np.ones(num_samples, dtype=np.float64)
+
+        if feat_dict.get("weight_factor", 0) > 0:
+            weights = np.asarray(self.set_weights_higher_recent(num_samples), dtype=np.float64)
+
+        if feat_dict.get("ldp_time_decay", 0) > 0:
+            if isinstance(dataframe.index, pd.DatetimeIndex):
+                decay_factor = feat_dict.get("ldp_time_decay", 1.0)
+                weights = np.asarray(
+                    ldp.get_sample_weights_by_time_decay(
+                        dataframe.index.to_series(), decay_factor=decay_factor
+                    ),
+                    dtype=np.float64,
+                )
+            else:
+                logger.warning("ldp_time_decay requires DatetimeIndex.")
+
+        if feat_dict.get("ldp_sample_uniqueness", False):
+            if isinstance(dataframe.index, pd.DatetimeIndex):
+                horizon_candles = feat_dict.get("label_horizon_candles", 10)
+                timeframe = self.config.get("timeframe", "5m")
+                horizon_seconds = horizon_candles * timeframe_to_seconds(timeframe)
+                close_times = pd.Series(
+                    dataframe.index + pd.Timedelta(seconds=horizon_seconds), index=dataframe.index
+                )
+                uniqueness_weights = ldp.get_sample_weights_by_uniqueness(close_times)
+                weights = weights * uniqueness_weights.values
+                weights = weights / weights.sum()
+            else:
+                logger.warning("ldp_sample_uniqueness requires DatetimeIndex.")
+
+        if feat_dict.get("ldp_return_weighting", False):
+            if len(labels.columns) > 0 and isinstance(labels, pd.DataFrame):
+                returns = labels.iloc[:, 0]
+                if not returns.isna().all():
+                    span = feat_dict.get("ldp_return_weight_span", 60)
+                    return_weights = ldp.get_sample_weights_by_returns(returns, span=span)
+                    weights = weights * return_weights
+                    weights = weights / weights.sum()
+
+        return weights
+
     def set_weights_higher_recent(self, num_weights: int) -> npt.ArrayLike:
-        """
-        Set weights so that recent data is more heavily weighted during
-        training than older data.
-        """
+        """Weight recent data more heavily using exponential decay."""
         wfactor = self.config["freqai"]["feature_parameters"]["weight_factor"]
         weights = np.exp(-np.arange(num_weights) / (wfactor * num_weights))[::-1]
         return weights
+
+    def _split_with_purged_kfold(
+        self, dataframe: DataFrame, labels: DataFrame, weights: npt.ArrayLike
+    ) -> tuple[DataFrame, DataFrame, DataFrame, DataFrame, npt.ArrayLike, npt.ArrayLike]:
+        """Split data using Purged K-Fold with embargo to prevent look-ahead bias."""
+        feat_dict = self.freqai_config["feature_parameters"]
+        n_splits = feat_dict.get("purged_cv_n_splits", 5)
+        pct_embargo = feat_dict.get("purged_cv_embargo_pct", 0.01)
+
+        samples_info_sets = None
+        if feat_dict.get("purged_cv_enable_purging", True):
+            if isinstance(dataframe.index, pd.DatetimeIndex):
+                horizon_candles = feat_dict.get("label_horizon_candles", 10)
+                timeframe = self.config.get("timeframe", "5m")
+                horizon_seconds = horizon_candles * timeframe_to_seconds(timeframe)
+                samples_info_sets = pd.Series(
+                    dataframe.index + pd.Timedelta(seconds=horizon_seconds), index=dataframe.index
+                )
+            else:
+                logger.warning("Purging requires DatetimeIndex.")
+
+        cv = ldp.PurgedKFold(
+            n_splits=n_splits, samples_info_sets=samples_info_sets, pct_embargo=pct_embargo
+        )
+
+        # Use the final fold as validation so training data remains chronologically
+        # before the holdout fold while still applying purge/embargo rules.
+        train_idx, test_idx = list(cv.split(dataframe))[-1]
+
+        train_features = dataframe.iloc[train_idx]
+        test_features = dataframe.iloc[test_idx]
+        train_labels = labels.iloc[train_idx]
+        test_labels = labels.iloc[test_idx]
+        weights_array = np.asarray(weights)
+        train_weights = weights_array[train_idx]
+        test_weights = weights_array[test_idx]
+
+        logger.info(
+            f"Purged K-Fold: train={len(train_idx)}, test={len(test_idx)}, "
+            f"embargo={pct_embargo * 100:.1f}%"
+        )
+
+        return train_features, test_features, train_labels, test_labels, train_weights, test_weights
 
     def get_predictions_to_append(
         self, predictions: DataFrame, do_predict: npt.ArrayLike, dataframe_backtest: DataFrame
@@ -437,7 +541,6 @@ class FreqaiDataKitchen:
                 append_dict[f"{label}_mean"] = self.data["labels_mean"][label]
             if "labels_std" in self.data and label in self.data["labels_std"]:
                 append_dict[f"{label}_std"] = self.data["labels_std"][label]
-
         for extra_col in self.data["extra_returns_per_train"]:
             append_dict[f"{extra_col}"] = self.data["extra_returns_per_train"][extra_col]
 
@@ -481,12 +584,12 @@ class FreqaiDataKitchen:
 
         return
 
-    def create_fulltimerange(self, backtest_tr: str, backtest_period_days: int) -> str:
-        if not isinstance(backtest_period_days, int):
-            raise OperationalException("backtest_period_days must be an integer")
+    def create_fulltimerange(self, backtest_tr: str, train_period_days: int) -> str:
+        if not isinstance(train_period_days, int):
+            raise OperationalException("train_period_days must be an integer")
 
-        if backtest_period_days < 0:
-            raise OperationalException("backtest_period_days must be positive")
+        if train_period_days < 0:
+            raise OperationalException("train_period_days must be positive")
 
         backtest_timerange = TimeRange.parse_timerange(backtest_tr)
 
@@ -504,9 +607,7 @@ class FreqaiDataKitchen:
             #     datetime.now(tz=timezone.utc).timestamp()
             # )
 
-        backtest_timerange.startts = (
-            backtest_timerange.startts - backtest_period_days * SECONDS_IN_DAY
-        )
+        backtest_timerange.startts = backtest_timerange.startts - train_period_days * SECONDS_IN_DAY
         full_timerange = backtest_timerange.timerange_str
         config_path = Path(self.config["config_files"][0])
 
@@ -892,7 +993,9 @@ class FreqaiDataKitchen:
         compact for Frequi purposes.
         """
         to_keep = [
-            col for col in dataframe.columns if not col.startswith("%") or col.startswith("%%")
+            col
+            for col in dataframe.columns
+            if not isinstance(col, str) or not col.startswith("%") or col.startswith("%%")
         ]
         return dataframe[to_keep]
 

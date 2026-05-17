@@ -71,6 +71,9 @@ Backtesting mode requires [downloading the necessary data](#downloading-data-to-
     Backtesting calls `set_freqai_targets()` one time for each backtest window (where the number of windows is the full backtest timerange divided by the `backtest_period_days` parameter). Doing this means that the targets simulate dry/live behavior without look ahead bias. However, the definition of the features in `feature_engineering_*()` is performed once on the entire training timerange. This means that you should be sure that features do not look-ahead into the future.
     More details about look-ahead bias can be found in [Common Mistakes](strategy-customization.md#common-mistakes-when-developing-strategies).
 
+!!! Note "Walk-forward windows and purged CV"
+    FreqAI backtesting has two separate time-safety layers. The outer layer is the walk-forward window: FreqAI trains on the previous `train_period_days`, predicts the next `backtest_period_days`, then slides forward and retrains. Lopez de Prado models can add an inner Purged K-Fold CV layer inside each training window. That inner CV uses explicit event end times (`t1` / `train_t1` / `train_event_end_times`) when available, so label intervals that overlap a validation fold are purged and the configured embargo is applied. These safeguards do not make unsafe feature engineering safe: features must still be causal, and changing features still requires a new FreqAI `identifier` so cached predictions are not reused.
+
 ---
 
 ### Saving backtesting prediction data
