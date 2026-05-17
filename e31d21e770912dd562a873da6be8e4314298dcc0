@@ -1,0 +1,11 @@
+problem: PR #10 remained red after code/test fixes because the fork CI coverage job failed in codecov upload, not pytest.
+approach: Inspected the failing ubuntu-24.04 Python 3.12 job logs and found codecov-action failed with Token required / not valid tokenless upload while tests had completed. Kept coverage upload strict on canonical freqtrade/freqtrade but made fail_ci_if_error false on fork repositories.
+failed_paths:
+  - Looking for pytest traceback was misleading; the only failed step was codecov upload.
+verification:
+  - gh run view 25974582857 --job 76352425014 --log identified codecov token failure
+  - python -m pre_commit run --show-diff-on-failure --color=never --all-files
+  - git diff --check
+workflow_learning: When only one matrix job fails after tests pass, inspect the failed step JSON before assuming test failures; fork PRs may lack Codecov tokens even when the repository owns the fork PR.
+related_files:
+  - .github/workflows/ci.yml
