@@ -1,0 +1,22 @@
+problem: Tao4 extraction run exposed two remaining FreqAI LDP integration issues with datasieve ndarray transforms and CatBoost fold train directories
+approach:
+  - Allowed FractionalDifferentiator to fit/transform numpy arrays while preserving DataFrame behavior
+  - Created CatBoost train_dir directories before per-fold and single-model fits
+  - Added regression coverage for ndarray transform path
+failed_paths:
+  - Initial Tao2/Tao4 LDP run failed when datasieve SKLearnWrapper passed ndarray into FractionalDifferentiator
+  - Next run failed when CatBoost could not create nested fold train working dirs
+verification:
+  - python -m ruff format targeted files
+  - python -m ruff check targeted files
+  - python -m py_compile targeted files
+  - .venv/bin/python -m pytest tests/freqai/test_lopez_de_prado.py -q
+  - pre-commit run --all-files
+workflow_learning: Run real FreqAI strategy smoke tests against custom prediction models; unit tests can miss datasieve wrapper type conversions and model-library filesystem assumptions
+related_files:
+  - freqtrade/freqai/lopez_de_prado_transforms.py
+  - freqtrade/freqai/prediction_models/CatboostClassifierLopezDePrado.py
+  - freqtrade/freqai/prediction_models/CatboostClassifierMultiTargetLopezDePrado.py
+  - freqtrade/freqai/prediction_models/CatboostRegressorLopezDePrado.py
+  - freqtrade/freqai/prediction_models/CatboostRegressorMultiTargetLopezDePrado.py
+  - tests/freqai/test_lopez_de_prado.py
