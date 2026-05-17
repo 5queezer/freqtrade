@@ -51,9 +51,11 @@ class CatboostRegressorMultiTargetLopezDePrado(BaseRegressionModel, LopezDePrado
                     X.iloc[val_idx], y_single.iloc[val_idx], weight=sample_weight[val_idx]
                 )
 
+                train_dir = Path(dk.data_path) / f"t{target_idx}_f{fold_idx}"
+                train_dir.mkdir(parents=True, exist_ok=True)
                 model = CatBoostRegressor(
                     allow_writing_files=True,
-                    train_dir=Path(dk.data_path) / f"t{target_idx}_f{fold_idx}",
+                    train_dir=train_dir,
                     **self.model_training_parameters,
                 )
                 model.fit(X=train_pool, eval_set=val_pool)
@@ -68,8 +70,10 @@ class CatboostRegressorMultiTargetLopezDePrado(BaseRegressionModel, LopezDePrado
         return MultiTargetRegressorEnsembleWrapper(target_ensembles)
 
     def _train_multi_target_single(self, X, y, sample_weight, data_dictionary, dk):
+        train_dir = Path(dk.data_path)
+        train_dir.mkdir(parents=True, exist_ok=True)
         cbr = CatBoostRegressor(
-            allow_writing_files=True, train_dir=Path(dk.data_path), **self.model_training_parameters
+            allow_writing_files=True, train_dir=train_dir, **self.model_training_parameters
         )
         eval_sets = [None] * y.shape[1]
 

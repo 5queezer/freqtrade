@@ -6,6 +6,7 @@ These transformers are compatible with sklearn pipelines and datasieve.
 
 import logging
 
+import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -71,7 +72,6 @@ class FractionalDifferentiator(BaseEstimator, TransformerMixin):
         """
         if isinstance(X, pd.DataFrame):
             self.feature_names_in_ = list(X.columns)
-
             # Determine which columns to differentiate
             if self.columns is None:
                 # Apply to all numeric columns
@@ -80,8 +80,14 @@ class FractionalDifferentiator(BaseEstimator, TransformerMixin):
                 ]
             else:
                 self.columns_to_diff_ = self.columns
+        elif isinstance(X, np.ndarray):
+            self.feature_names_in_ = list(range(X.shape[1]))
+            if self.columns is None:
+                self.columns_to_diff_ = list(range(X.shape[1]))
+            else:
+                self.columns_to_diff_ = self.columns
         else:
-            raise ValueError("FractionalDifferentiator requires pandas DataFrame input")
+            raise ValueError("FractionalDifferentiator requires pandas DataFrame or ndarray input")
 
         return self
 
@@ -99,12 +105,15 @@ class FractionalDifferentiator(BaseEstimator, TransformerMixin):
         pd.DataFrame
             Fractionally differentiated features
         """
-        if not isinstance(X, pd.DataFrame):
-            raise ValueError("FractionalDifferentiator requires pandas DataFrame input")
         if not hasattr(self, "columns_to_diff_"):
             raise ValueError("FractionalDifferentiator must be fitted before transform")
-
-        X_transformed = X.copy()
+        input_is_array = isinstance(X, np.ndarray)
+        if input_is_array:
+            X_transformed = pd.DataFrame(X.copy(), columns=self.feature_names_in_)
+        elif isinstance(X, pd.DataFrame):
+            X_transformed = X.copy()
+        else:
+            raise ValueError("FractionalDifferentiator requires pandas DataFrame or ndarray input")
 
         # Apply fractional differentiation to selected columns
         for col in self.columns_to_diff_:
@@ -125,6 +134,8 @@ class FractionalDifferentiator(BaseEstimator, TransformerMixin):
                         f"Keeping original values."
                     )
 
+        if input_is_array:
+            return X_transformed.to_numpy()
         return X_transformed
 
     def get_feature_names_out(self, input_features=None):

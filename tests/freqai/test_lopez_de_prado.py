@@ -271,6 +271,23 @@ class TestFractionalDifferentiation:
         with pytest.raises(ValueError, match="must be fitted before transform"):
             transformer.transform(pd.DataFrame({"x": [1.0, 2.0, 3.0]}))
 
+    def test_fractional_differentiator_accepts_ndarray_from_datasieve_wrapper(self):
+        transformer = FractionalDifferentiator(d=0.5, threshold=0.5)
+        features = np.array(
+            [
+                [1.0, 10.0],
+                [2.0, 11.0],
+                [3.0, 13.0],
+                [5.0, 16.0],
+            ]
+        )
+
+        transformed = transformer.fit(features).transform(features)
+
+        assert isinstance(transformed, np.ndarray)
+        assert transformed.shape == features.shape
+        assert np.all(np.isfinite(transformed))
+
 
 class TestTripleBarrier:
     """Test triple-barrier labeling."""

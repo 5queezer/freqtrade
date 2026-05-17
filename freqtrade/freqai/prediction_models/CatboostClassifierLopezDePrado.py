@@ -44,10 +44,12 @@ class CatboostClassifierLopezDePrado(BaseClassifierModel, LopezDePradoMixin):
                 data=X.iloc[val_idx], label=y.iloc[val_idx], weight=sample_weights[val_idx]
             )
 
+            train_dir = Path(dk.data_path) / f"fold_{fold_idx}"
+            train_dir.mkdir(parents=True, exist_ok=True)
             model = CatBoostClassifier(
                 allow_writing_files=True,
                 loss_function="MultiClass",
-                train_dir=Path(dk.data_path) / f"fold_{fold_idx}",
+                train_dir=train_dir,
                 **self.model_training_parameters,
             )
             model.fit(X=train_pool, eval_set=val_pool)
@@ -70,10 +72,12 @@ class CatboostClassifierLopezDePrado(BaseClassifierModel, LopezDePradoMixin):
                 weight=data_dictionary["test_weights"],
             )
 
+        train_dir = Path(dk.data_path)
+        train_dir.mkdir(parents=True, exist_ok=True)
         model = CatBoostClassifier(
             allow_writing_files=True,
             loss_function="MultiClass",
-            train_dir=Path(dk.data_path),
+            train_dir=train_dir,
             **self.model_training_parameters,
         )
         model.fit(X=train_data, eval_set=test_data, init_model=self.get_init_model(dk.pair))

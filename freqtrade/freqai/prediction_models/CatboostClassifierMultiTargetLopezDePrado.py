@@ -51,10 +51,12 @@ class CatboostClassifierMultiTargetLopezDePrado(BaseClassifierModel, LopezDePrad
                     X.iloc[val_idx], y_single.iloc[val_idx], weight=sample_weight[val_idx]
                 )
 
+                train_dir = Path(dk.data_path) / f"t{target_idx}_f{fold_idx}"
+                train_dir.mkdir(parents=True, exist_ok=True)
                 model = CatBoostClassifier(
                     allow_writing_files=True,
                     loss_function="MultiClass",
-                    train_dir=Path(dk.data_path) / f"t{target_idx}_f{fold_idx}",
+                    train_dir=train_dir,
                     **self.model_training_parameters,
                 )
                 model.fit(X=train_pool, eval_set=val_pool)
@@ -69,10 +71,12 @@ class CatboostClassifierMultiTargetLopezDePrado(BaseClassifierModel, LopezDePrad
         return MultiTargetEnsembleWrapper(target_ensembles)
 
     def _train_multi_target_single(self, X, y, sample_weight, data_dictionary, dk):
+        train_dir = Path(dk.data_path)
+        train_dir.mkdir(parents=True, exist_ok=True)
         cbc = CatBoostClassifier(
             allow_writing_files=True,
             loss_function="MultiClass",
-            train_dir=Path(dk.data_path),
+            train_dir=train_dir,
             **self.model_training_parameters,
         )
         eval_sets = [None] * y.shape[1]
