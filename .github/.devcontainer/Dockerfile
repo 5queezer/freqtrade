@@ -3,6 +3,7 @@ FROM freqtradeorg/freqtrade:develop_freqairl
 USER root
 # Install dependencies
 COPY requirements-dev.txt /freqtrade/
+COPY docs/requirements-docs.txt /freqtrade/docs/requirements-docs.txt
 
 ARG USERNAME=ftuser
 
